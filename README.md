@@ -103,7 +103,11 @@ Fire TV (FYAISA app)  ──HTTP──▶  bridge on your PC  ──▶  npm bui
         └──── polls job status ────────┘
 ```
 
-The bridge holds the build/install powers; the TV is a remote control.
+The bridge holds the build/install powers; the TV is a remote control. Paired
+apps can also run **allowlisted `vega` CLI commands** on the PC through the
+same connection (device list, launch, `exec vda connect`, …) — see §6 of
+[`docs/HOMEBREW.md`](docs/HOMEBREW.md) and the vendored
+[`bridge/client/fyaisaClient.ts`](bridge/client/fyaisaClient.ts).
 
 ### Security
 
@@ -150,7 +154,7 @@ repo's Releases page; the catalog's `install` block describes how to get one.
 | Component | State |
 | --- | --- |
 | `fyaisa` CLI | Working — list / search / info / install / update / uninstall / devices / connect / approve |
-| `fyaisa connect` bridge | Working — pairing (incl. `fyaisa approve`), token auth, and real end-to-end installs verified on a Fire TV Stick HD |
+| `fyaisa connect` bridge | Working — pairing (incl. `fyaisa approve`), token auth, real end-to-end installs, and `POST /vega` (allowlisted CLI access for homebrew apps), all verified on a Fire TV Stick HD |
 | Catalog | `catalog.json` schema v1, served from this repo |
 | FYAISA app | Working on a Fire TV Stick HD — live catalog fetch, pairing that persists across restarts/reboots/upgrades, Install via PC (build log streams back to the TV) |
 | Apps | 1 (`app.tizentube.vega`) |

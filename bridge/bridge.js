@@ -152,6 +152,93 @@ async function installApp(appId, job) {
 }
 
 // ---------------------------------------------------------------------------
+// /vega — run an allowlisted `vega` CLI command on this PC on behalf of a
+// paired app. Homebrew apps use this to reach the Vega CLI through the same
+// pairing they already have (device list, launch, run-cmd, …).
+//
+// Deliberately NOT a generic shell:
+//   - `vega` only, spawned with an args array (no shell, so no metacharacters).
+//   - The leading args must match an allowlist (device/platform/exec vda/…).
+//   - Every arg must match a strict character whitelist.
+//   - Output is capped and the process is killed after a timeout.
+// ---------------------------------------------------------------------------
+const VEGA_ARG_RE = /^[A-Za-z0-9 ._/:=,@+-]+$/;
+const VEGA_ROOTS = new Set(['device', 'platform', 'exec', 'virtual-device']);
+const VEGA_MAX_OUTPUT = 256 * 1024;
+const VEGA_MAX_CONCURRENT = 4;
+let vegaInFlight = 0;
+
+function vegaArgsAllowed(argv) {
+  if (!Array.isArray(argv) || argv.length === 0 || argv.length > 12) return false;
+  if (!argv.every((a) => typeof a === 'string' && VEGA_ARG_RE.test(a))) return false;
+  const [root, sub] = argv;
+  if (root === '--version') return argv.length === 1;
+  if (!VEGA_ROOTS.has(root)) return false;
+  if (root === 'exec' && sub !== 'vda') return false; // `vega exec <sdk-tool>` — only vda
+  return true;
+}
+
+function handleVegaExec(res, body) {
+  const argv = body.args;
+  if (!vegaArgsAllowed(argv)) {
+    return json(res, 403, {
+      error: 'args not allowed — the bridge only runs an allowlisted subset of `vega` (device/platform/exec vda/--version)',
+    });
+  }
+  if (vegaInFlight >= VEGA_MAX_CONCURRENT) {
+    return json(res, 429, { error: 'too many concurrent vega calls' });
+  }
+  vegaInFlight += 1;
+
+  const timeoutMs = Math.min(Math.max(Number(body.timeoutMs) || 30000, 1000), 120000);
+  const started = Date.now();
+  log(`vega ${argv.join(' ')}`);
+  const child = spawn('vega', argv, { env: process.env }); // no shell
+  let out = '';
+  let err = '';
+  let truncated = false;
+  let timedOut = false;
+  let done = false;
+
+  const finish = (payload) => {
+    if (done) return;
+    done = true;
+    vegaInFlight -= 1;
+    json(res, payload.code, payload.body);
+  };
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill('SIGKILL');
+  }, timeoutMs);
+
+  child.stdout.on('data', (d) => {
+    if (out.length < VEGA_MAX_OUTPUT) out += d.toString();
+    else truncated = true;
+  });
+  child.stderr.on('data', (d) => {
+    if (err.length < VEGA_MAX_OUTPUT) err += d.toString();
+    else truncated = true;
+  });
+  child.on('error', (e) => {
+    clearTimeout(timer);
+    finish({ code: 500, body: { error: `could not run vega on this PC: ${e.message}` } });
+  });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    const durationMs = Date.now() - started;
+    if (timedOut) {
+      finish({
+        code: 504,
+        body: { error: `timed out after ${timeoutMs}ms`, killed: true, stdout: out, stderr: err, truncated, durationMs },
+      });
+    } else {
+      finish({ code: 200, body: { ok: code === 0, exitCode: code, stdout: out, stderr: err, truncated, durationMs } });
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
 function json(res, code, body) {
@@ -276,6 +363,11 @@ const server = http.createServer(async (req, res) => {
       log(l),
     );
     return json(res, rc === 0 ? 200 : 500, { ok: rc === 0 });
+  }
+
+  if (path_ === '/vega' && req.method === 'POST') {
+    const body = await readBody(req);
+    return handleVegaExec(res, body);
   }
 
   return json(res, 404, { error: 'not found' });

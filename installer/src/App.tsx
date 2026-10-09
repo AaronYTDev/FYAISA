@@ -23,6 +23,7 @@ import {
 } from 'react-native';
 import {Pressable} from '@amazon-devices/react-native-kepler';
 import {KeplerFileSystem} from '@amazon-devices/kepler-file-system';
+import {Fyaisa, FyaisaError} from './fyaisaClient';
 import {
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
@@ -147,6 +148,25 @@ const HOST_KEYS = [
 const statusColor = (s?: string) =>
   s === 'stable' ? '#4caf50' : s === 'beta' ? '#ffb300' : '#9e9e9e';
 
+/**
+ * Ask the paired PC what it can do — CLI version + how many Fire TVs it sees.
+ * This goes through the bridge's /vega endpoint, which runs allowlisted `vega`
+ * commands on the PC on our behalf.
+ */
+const describePc = async (fy: Fyaisa): Promise<string> => {
+  try {
+    const [ver, devs] = await Promise.all([
+      fy.vega(['--version'], 15000),
+      fy.vega(['device', 'list'], 25000),
+    ]);
+    const m = /Vega CLI Version:\s*([\d.]+)/.exec(ver.stdout);
+    const n = (devs.stdout.match(/\d+\.\d+\.\d+\.\d+:\d+/g) || []).length;
+    return `Vega CLI ${m ? m[1] : 'ok'} · ${n} device${n === 1 ? '' : 's'} connected`;
+  } catch (e: any) {
+    return `PC reachable, but the Vega CLI failed (${e?.message || e})`;
+  }
+};
+
 export const App = () => {
   usePreventHideSplashScreen();
   const hideSplashScreenCallback = useHideSplashScreenCallback();
@@ -162,6 +182,8 @@ export const App = () => {
     status: 'idle',
     message: 'Not connected',
   });
+  /** One-line summary of what the paired PC can do (via /vega). */
+  const [pcInfo, setPcInfo] = useState<string | null>(null);
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
@@ -192,11 +214,13 @@ export const App = () => {
         message: 'Connected',
       }));
       try {
-        const res = await fetch(`http://${saved.host}:${BRIDGE_PORT}/catalog`, {
-          method: 'GET',
-          headers: {'X-FYAISA-Token': saved.token},
-        });
-        if (res.status === 401) {
+        const fy = new Fyaisa(saved.host, saved.token, BRIDGE_PORT);
+        await fy.catalog(); // token validation: 401 => stale pairing
+        if (!cancelled) {
+          setPcInfo(await describePc(fy));
+        }
+      } catch (e: any) {
+        if (e instanceof FyaisaError && e.status === 401) {
           console.warn('[FYAISA] saved token rejected by bridge — clearing pairing');
           await clearPair();
           if (!cancelled) {
@@ -207,11 +231,14 @@ export const App = () => {
               message: 'Pairing expired — pair again',
             }));
           }
+        } else {
+          // PC unreachable right now — stay paired; it may come back when the
+          // PC is on the same network.
+          console.info('[FYAISA] bridge unreachable during restore check (PC offline?)');
+          if (!cancelled) {
+            setPcInfo('PC offline right now');
+          }
         }
-      } catch {
-        // PC unreachable right now — stay paired; it may come back when the
-        // PC is on the same network.
-        console.info('[FYAISA] bridge unreachable during restore check (PC offline?)');
       }
     })();
     return () => {
@@ -285,6 +312,9 @@ export const App = () => {
               };
             });
             console.info('[FYAISA] paired with bridge');
+            if (pair.host) {
+              setPcInfo(await describePc(new Fyaisa(pair.host, ok.token, BRIDGE_PORT)));
+            }
           }
         } catch (e: any) {
           clearInterval(iv);
@@ -428,6 +458,7 @@ export const App = () => {
             <Text style={styles.statusLine}>
               Status: {pair.status} — {pair.message}
             </Text>
+            {pcInfo ? <Text style={styles.pcInfo}>{pcInfo}</Text> : null}
             {pair.code ? <Text style={styles.code}>Code: {pair.code}</Text> : null}
             <Pressable
               hasTVPreferredFocus
@@ -443,6 +474,7 @@ export const App = () => {
                 style={styles.forgetBtn}
                 onPress={() => {
                   clearPair();
+                  setPcInfo(null);
                   setPair(p => ({...p, token: null, code: null, status: 'idle', message: 'Pairing forgotten'}));
                   console.info('[FYAISA] pairing cleared');
                 }}>
@@ -706,6 +738,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {color: '#fff', fontSize: 19, fontWeight: '600', marginBottom: 10},
   statusLine: {color: '#b9b9c6', fontSize: 15, marginBottom: 10},
+  pcInfo: {color: '#7fd18c', fontSize: 14, marginBottom: 10},
   keypad: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12},
   key: {
     width: 68,

@@ -88,4 +88,7 @@ That split is a platform constraint, not a design choice.
 
 [`docs/HOMEBREW.md`](../docs/HOMEBREW.md) — Vega OS platform notes for app
 developers: the sandbox layout (`/data`, `/tmp`, `/pkg`), `KeplerFileSystem`
-usage, TV focus/`BackHandler`, and other gotchas verified on device.
+usage, TV focus/`BackHandler`, and other gotchas verified on device. It also
+covers [`fyaisaClient.ts`](../bridge/client/fyaisaClient.ts) — a vendored
+client that lets your app pair with `fyaisa connect` and run allowlisted
+`vega` CLI commands on the user's PC.

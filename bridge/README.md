@@ -56,8 +56,37 @@ Options:
 | `GET` | `/job?id=` | token | job status + build log |
 | `GET` | `/jobs` | token | all jobs |
 | `POST` | `/launch` | token | `{appId}` launch an app on the device |
+| `POST` | `/vega` | token | run an **allowlisted** `vega` CLI command on the PC |
 
 Auth is `X-FYAISA-Token: <token>` compared with `crypto.timingSafeEqual`.
+
+## Running the Vega CLI from an app (`POST /vega`)
+
+Any paired homebrew app can reach the Vega CLI on the PC — device list, launch,
+terminate, `exec vda connect`, `run-cmd`, … — through the same pairing it
+already has:
+
+```bash
+curl -X POST http://<pc>:47821/vega -H "X-FYAISA-Token: $TOKEN" \
+     -d '{"args":["device","list"]}'
+# -> {"ok":true,"exitCode":0,"stdout":"Found the following device: …","stderr":"","durationMs":1440}
+```
+
+Body: `{args: string[], timeoutMs?: number}` (default 30 s, max 120 s).
+Response: `{ok, exitCode, stdout, stderr, truncated, durationMs}`.
+
+This is **not** a generic shell, by design:
+
+- Only `vega` is spawned, with an argument array — never through a shell.
+- The leading args must match an allowlist: `--version`, `device …`,
+  `platform …`, `exec vda …`, `virtual-device …`. Anything else gets `403`.
+- Every argument must match `[A-Za-z0-9 ._/:=,@+-]+` — no `; | & $ ( ) < >` etc.
+- Output is capped at 256 KB per stream, max 4 concurrent calls (then `429`),
+  and the process is killed at the timeout (then `504` with partial output).
+
+The easiest way to use it is the vendored client — see
+[`client/fyaisaClient.ts`](client/fyaisaClient.ts) and the
+“Access the Vega CLI from your app” section of [`docs/HOMEBREW.md`](../docs/HOMEBREW.md).
 
 ## Security notes
 

@@ -10,6 +10,8 @@ your PC                                    your Fire TV
 Vega CLI (vega …)  ──TCP 5555──────────▶  Developer Mode (ADB-style bridge)
 fyaisa (CLI)       ──builds + installs─▶  vega device install-app
 fyaisa connect    ◀──HTTP 47821────────  FYAISA app (pairing + install requests)
+                                          other homebrew apps: same pairing,
+                                          allowlisted `vega` CLI access (§6)
 ```
 
 ## 1. Prerequisites
@@ -127,7 +129,43 @@ If the token ever goes stale (e.g. you deleted `~/.fyaisa/bridge.json`), the
 app detects the 401 on its next launch and asks you to re-pair; the **Forget
 this PC** button clears it manually.
 
-## 6. Ship your own app to the hub
+## 6. Access the Vega CLI from your app (`/vega`)
+
+Homebrew apps don't have to stop at pairing for installs: the bridge can also
+**run the Vega CLI on the PC on your app's behalf**. Pair once (§5), then:
+
+```ts
+import {Fyaisa} from './fyaisaClient'; // vendored copy — see below
+
+const fy = Fyaisa.from({host: '192.168.12.102', token});
+
+const cli  = await fy.vega(['--version']);              // "Vega CLI Version: 1.4.4"
+const devs = await fy.vega(['device', 'list']);         // connected Fire TVs
+await fy.vega(['device', 'launch-app',  '--appName', 'app.tizentube.vega']);
+await fy.vega(['device', 'terminate-app', '--appName', 'app.tizentube.vega']);
+await fy.vega(['exec', 'vda', 'connect', '192.168.12.197:5555']);
+await fy.vega(['device', 'run-cmd', '--command', 'ls /data']); // shell on the stick
+```
+
+Every call resolves to `{ok, exitCode, stdout, stderr, truncated, durationMs}`.
+The FYAISA app itself uses this: its Connect screen shows the PC's CLI version
+and how many Fire TVs it sees.
+
+**Getting the client.** It's a single dependency-free file — copy
+[`bridge/client/fyaisaClient.ts`](../bridge/client/fyaisaClient.ts) into your
+app's `src/` (it uses the global `fetch`, so it works in React Native as-is).
+It also ships the unauthenticated pairing helpers, so your app can run the
+whole code → `fyaisa approve` → token flow itself.
+
+**What the bridge will and won't run.** `POST /vega` is deliberately not a
+shell: only `vega` is spawned (argument array, no shell), the leading args must
+be on the allowlist (`--version`, `device …`, `platform …`, `exec vda …`,
+`virtual-device …`), and every argument must match
+`[A-Za-z0-9 ._/:=,@+-]+`. Output is capped, concurrency is limited, and slow
+commands are killed at the timeout. Anything else is a `403` — see
+[`bridge/README.md`](../bridge/README.md) for the full rules.
+
+## 7. Ship your own app to the hub
 
 1. Copy the reference app: `cp -r apps/tizentube-vega apps/my-app`, then change
    `manifest.toml` (app id, name), `package.json` (name, `vega` config) and the
@@ -139,7 +177,7 @@ this PC** button clears it manually.
 The full contract (naming, licensing, catalog fields) is in
 [`apps/README.md`](../apps/README.md).
 
-## 7. Vega OS gotchas (all verified the hard way)
+## 8. Vega OS gotchas (all verified the hard way)
 
 1. **RN UI components come from `@amazon-devices/react-native-kepler`**, not
    `react-native`. Its `Pressable` types take a `{focused}` prop for TV
