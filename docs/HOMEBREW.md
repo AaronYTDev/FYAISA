@@ -63,14 +63,14 @@ The fast path — the hub CLI does dependency install, build and install in one 
 ```bash
 fyaisa list                    # catalog
 fyaisa search youtube
-fyaisa info app.tizentube.vega
-fyaisa install app.tizentube.vega
+fyaisa info app.vegatube.main
+fyaisa install app.vegatube.main
 ```
 
 The manual equivalent, for any Vega project (this is all `fyaisa install` does):
 
 ```bash
-cd apps/tizentube-vega
+cd apps/vegatube
 npm install
 npm run build:release          # produces a .vpkg under build/
 vega device install-app --dir . -b Release
@@ -79,9 +79,9 @@ vega device install-app --dir . -b Release
 Managing what's on the device:
 
 ```bash
-vega device launch-app  --appName app.tizentube.vega
-vega device terminate-app --appName app.tizentube.vega
-vega device is-app-running --appName app.tizentube.vega
+vega device launch-app  --appName app.vegatube.main
+vega device terminate-app --appName app.vegatube.main
+vega device is-app-running --appName app.vegatube.main
 vega device start-log-stream              # follow device logs (see gotcha #8)
 vega device run-cmd --command 'ls /data'  # shell on the device (as app_user)
 ```
@@ -141,8 +141,8 @@ const fy = Fyaisa.from({host: '192.168.12.102', token});
 
 const cli  = await fy.vega(['--version']);              // "Vega CLI Version: 1.4.4"
 const devs = await fy.vega(['device', 'list']);         // connected Fire TVs
-await fy.vega(['device', 'launch-app',  '--appName', 'app.tizentube.vega']);
-await fy.vega(['device', 'terminate-app', '--appName', 'app.tizentube.vega']);
+await fy.vega(['device', 'launch-app',  '--appName', 'app.vegatube.main']);
+await fy.vega(['device', 'terminate-app', '--appName', 'app.vegatube.main']);
 await fy.vega(['exec', 'vda', 'connect', '192.168.12.197:5555']);
 await fy.vega(['device', 'run-cmd', '--command', 'ls /data']); // shell on the stick
 ```
@@ -167,7 +167,7 @@ commands are killed at the timeout. Anything else is a `403` — see
 
 ## 7. Ship your own app to the hub
 
-1. Copy the reference app: `cp -r apps/tizentube-vega apps/my-app`, then change
+1. Copy the reference app: `cp -r apps/vegatube apps/my-app`, then change
    `manifest.toml` (app id, name), `package.json` (name, `vega` config) and the
    source.
 2. Register it in `catalog.json` (one entry per app — see the schema fields on
@@ -217,7 +217,7 @@ The full contract (naming, licensing, catalog fields) is in
    code didn't run; repeat important logs, or surface state in the UI.
 9. **Right after a sideload the first launch can fail once** on some OS
    versions. If an app comes up blank, terminate and launch it again (see the
-   cold-start recovery comment in `apps/tizentube-vega/src/App.tsx`).
+   cold-start recovery comment in `apps/vegatube/src/App.tsx`).
 
 ## Troubleshooting
 

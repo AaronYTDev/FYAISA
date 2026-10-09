@@ -1,9 +1,10 @@
 # Credits for various apps below.
 
 
-## TizenTube Vega
+## VegaTube (formerly TizenTube Vega)
 #### aaronYTDev - Porting TizenTube to Vega OS
 #### ReisXD - Original TizenTube
+#### FYAISA - pairing API, hub and example-app integration
 
 ---
 
@@ -12,7 +13,7 @@
 Everything below this line documents the app format used by this hub.
 
 Every app in `apps/` is a **complete Vega OS project** — the same layout as the
-TizenTube Vega app that ships here as the reference implementation. There is no
+VegaTube app that ships here as the reference implementation. There is no
 FYAISA-specific runtime, wrapper, or API: if it builds and runs with the Vega
 SDK, it belongs in the hub.
 
@@ -63,7 +64,7 @@ git clone https://github.com/AaronYTDev/FYAISA
 cd FYAISA
 mkdir -p apps/my-app
 # easiest: copy the reference app and replace manifest/package/app.json/src
-cp -r apps/tizentube-vega apps/my-app
+cp -r apps/vegatube apps/my-app
 $EDITOR apps/my-app/manifest.toml     # id + title
 $EDITOR apps/my-app/package.json      # name -> @fyaisa/my-app
 # then register it in catalog.json

@@ -129,8 +129,8 @@ const FALLBACK_CATALOG: Catalog = {
   hub: {name: 'FYAISA', tagline: 'Catalog unavailable — showing built-in list'},
   apps: [
     {
-      id: 'app.tizentube.vega',
-      name: 'TizenTube',
+      id: 'app.vegatube.main',
+      name: 'VegaTube',
       summary: 'Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks.',
       license: 'GPL-3.0-only',
       tags: ['youtube', 'adblock', 'sponsorblock'],

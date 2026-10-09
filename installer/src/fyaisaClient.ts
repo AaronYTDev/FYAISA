@@ -7,7 +7,7 @@
  *   const fy = Fyaisa.from({host: '192.168.1.10', token});
  *   const cli = await fy.vega(['--version']);          // -> "Vega CLI Version: 1.4.4"
  *   const devs = await fy.vega(['device', 'list']);    // -> device list output
- *   const {jobId} = await fy.install('app.tizentube.vega');
+ *   const {jobId} = await fy.install('app.vegatube.main');
  *
  * Pairing (once, no token yet):
  *
@@ -16,7 +16,8 @@
  *
  * Usage in an app: this file is vendored, not published — copy it into your
  * app's src/ (the canonical copy lives in bridge/client/ of the FYAISA repo;
- * installer/src/fyaisaClient.ts is the same file).
+ * installer/src/fyaisaClient.ts and apps/vegatube/src/fyaisaClient.ts are the
+ * same file).
  *
  * Security: `/vega` on the bridge only runs an allowlisted subset of the
  * `vega` CLI (device/platform/exec vda/--version), spawned without a shell.

@@ -22,7 +22,7 @@ FYAISA/
 ├── fyaisa                    # host CLI: list / search / build / install / connect / approve
 ├── apps/
 │   ├── README.md             # the app format (contract for contributors)
-│   └── tizentube-vega/       # reference app — ad-free YouTube for Vega
+│   └── vegatube/              # reference app — VegaTube (ad-free YouTube)
 ├── bridge/
 │   ├── bridge.js             # PC-side bridge for pairing with the TV app
 │   └── README.md             # bridge API + security model
@@ -38,7 +38,7 @@ git clone https://github.com/AaronYTDev/FYAISA
 cd FYAISA
 ./fyaisa list                      # what's available
 ./fyaisa devices                   # Fire TVs visible to the Vega CLI
-./fyaisa install app.tizentube.vega
+./fyaisa install app.vegatube.main
 ```
 
 Prerequisites: the [Vega SDK](https://developer.amazon.com/docs/vega/latest/install-vega-sdk.html)
@@ -133,7 +133,7 @@ can queue builds on your machine. Prefer LAN.
 ## Add your own app
 
 Apps are ordinary Vega projects — the format is documented in
-[`apps/README.md`](apps/README.md), and `apps/tizentube-vega` is the reference
+[`apps/README.md`](apps/README.md), and `apps/vegatube` is the reference
 implementation. In short: copy it, change `manifest.toml` + `package.json`,
 register the entry in `catalog.json`, open a PR.
 
@@ -157,7 +157,7 @@ repo's Releases page; the catalog's `install` block describes how to get one.
 | `fyaisa connect` bridge | Working — pairing (incl. `fyaisa approve`), token auth, real end-to-end installs, and `POST /vega` (allowlisted CLI access for homebrew apps), all verified on a Fire TV Stick HD |
 | Catalog | `catalog.json` schema v1, served from this repo |
 | FYAISA app | Working on a Fire TV Stick HD — live catalog fetch, pairing that persists across restarts/reboots/upgrades, Install via PC (build log streams back to the TV) |
-| Apps | 1 (`app.tizentube.vega`) |
+| Apps | 1 (`app.vegatube.main` — VegaTube) |
 
 ## Not affiliated with Amazon or Google
 

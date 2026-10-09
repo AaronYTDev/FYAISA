@@ -1,5 +1,5 @@
 /*
- * TizenTube for Vega OS — injection prelude.
+ * VegaTube for Vega OS — injection prelude (formerly TizenTube Vega).
  *
  * Runs at document-start inside the Vega WebView (plain Chromium), BEFORE the
  * TizenTube userscript and before any YouTube page scripts.
@@ -42,10 +42,10 @@
   /* Idempotency sentinel: the injection may be delivered more than once
      (e.g. via injectedJavaScriptBeforeContentLoaded and a load-time fallback).
      Never install the bridge/shims twice. */
-  if (window.__TIZENTUBE_VEGA__) {
+  if (window.__VEGATUBE__) {
     return;
   }
-  window.__TIZENTUBE_VEGA__ = true;
+  window.__VEGATUBE__ = true;
 
   /* ---------------------------------------------------------------- */
   /* 1. Seed TizenTube config (never clobber user settings)            */

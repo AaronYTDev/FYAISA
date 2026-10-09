@@ -128,7 +128,8 @@ elif mode == "info":
     if not a:
         print("NOTFOUND"); sys.exit(3)
     for k in ("id","name","summary","description","license","author","homepage",
-              "minOsVersion","targetOsVersion","architectures","status","updated","path"):
+              "minOsVersion","targetOsVersion","architectures","status","version",
+              "updated","path"):
         v = a.get(k)
         if isinstance(v, list):
             v = ", ".join(map(str, v))
@@ -177,7 +178,7 @@ require_device() {
 }
 
 # --- app source --------------------------------------------------------------
-# Apps live in apps/<dir>/ and are full Vega projects, exactly like TizenTube Vega.
+# Apps live in apps/<dir>/ and are full Vega projects, exactly like VegaTube.
 app_src_dir() {
   local rel; rel="$(app_path "$1")"
   [[ -n "$rel" ]] || die "App '$1' is not in the catalog."

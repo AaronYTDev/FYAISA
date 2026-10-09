@@ -11,13 +11,13 @@
   "schemaVersion": 1,
   "apps": [
     {
-      "id": "app.tizentube.vega",
-      "name": "TizenTube",
+      "id": "app.vegatube.main",
+      "name": "VegaTube",
       "summary": "Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks.",
-      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK.",
-      "path": "apps/tizentube-vega",
+      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega — VegaTube is the FYAISA example app, with hub updates built in.",
+      "path": "apps/vegatube",
       "license": "GPL-3.0-only",
-      "author": "TizenTube Vega contributors",
+      "author": "FYAISA contributors",
       "homepage": "https://github.com/reisxd/TizenTube",
       "minOsVersion": "1.2",
       "targetOsVersion": "1.2",
@@ -27,14 +27,16 @@
       "requiresNetwork": true,
       "drm": true,
       "status": "stable",
+      "version": "1.1.0",
       "updated": "2026-10-09",
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/tizentube-vega with the Vega SDK."
+        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/vegatube with the Vega SDK."
       },
       "notes": [
-        "Contains a vendored copy of the TizenTube userscript (GPL-3.0).",
+        "Contains a vendored copy of the TizenTube userscript (GPL-3.0); upstream credits live in the repos.",
+        "The FYAISA example app: pair with your PC for the in-app update menu, or use `fyaisa update app.vegatube.main`.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     }

@@ -1,10 +1,15 @@
 /**
- * TizenTube for Vega OS
- * ---------------------
+ * VegaTube for Vega OS (formerly TizenTube Vega)
+ * ---------------------------------------------
  * A minimal React Native for Vega shell that loads the official YouTube for
  * TVs web app (https://www.youtube.com/tv) in a Vega WebView and injects the
- * TizenTube userscript (ad block, SponsorBlock, DeArrow, speed controls,
- * theming) at document-start via a small native-bridge shim.
+ * upstream TizenTube userscript (ad block, SponsorBlock, DeArrow, speed
+ * controls, theming) at document-start via a small native-bridge shim.
+ *
+ * VegaTube is the FYAISA example app: it demonstrates how a homebrew Vega app
+ * uses the FYAISA bridge (`fyaisa connect`) — the startup menu checks the hub
+ * for new versions and can rebuild + reinstall itself on the Fire TV through
+ * the paired PC. See src/fyaisaClient.ts and docs/HOMEBREW.md §6.
  *
  * This mirrors how TizenTube Standalone works on Samsung Tizen (a bare app
  * container around youtube.com/tv + script injection) and how TizenTube
@@ -16,7 +21,6 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import {
   ActivityIndicator,
   BackHandler,
-  Pressable,
   StyleSheet,
   Text,
   View,
@@ -24,7 +28,10 @@ import {
 import {
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
+  Pressable as KeplerPressable,
 } from '@amazon-devices/react-native-kepler';
+import {KeplerFileSystem} from '@amazon-devices/kepler-file-system';
+import {Fyaisa, FyaisaError} from './fyaisaClient';
 import {
   WebViewErrorEvent,
   WebViewHttpErrorEvent,
@@ -52,6 +59,16 @@ const TV_USER_AGENT =
   'com.google.android.youtube.tv/5.30.301';
 
 const YOUTUBE_TV_URL = 'https://www.youtube.com/tv';
+
+// --- FYAISA integration (see docs/HOMEBREW.md §6) ---------------------------
+const BRIDGE_PORT = 47821;
+/** Our hub id — the bridge rebuilds + reinstalls this app from the catalog. */
+const VEGATUBE_APP_ID = 'app.vegatube.main';
+/** Published catalog; used for the update check (no pairing required). */
+const HUB_CATALOG_URL =
+  'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json';
+/** Pairing persistence in this app's private sandbox (/data is per-app). */
+const STORE_PATH = '/data/bridge.json';
 
 // Cold-start retry policy (see handleFailure).
 const MAX_AUTO_RETRIES = 4;
@@ -143,7 +160,7 @@ const buildTriggerScript = (total: number): string => `
     var pol = null;
     if (window.trustedTypes && window.trustedTypes.createPolicy) {
       try {
-        pol = window.trustedTypes.createPolicy('tizentubevega_' + Date.now(), {
+        pol = window.trustedTypes.createPolicy('vegatube_' + Date.now(), {
           createScript: function (x) { return x; },
           createScriptURL: function (u) { return u; }
         });
@@ -177,7 +194,7 @@ const buildTriggerScript = (total: number): string => `
       } catch (e) { P('[diag] inline script failed: ' + e); }
     }
     P('[diag] execution done ran=' + ran +
-      ' sentinel=' + (!!window.__TIZENTUBE_VEGA__));
+      ' sentinel=' + (!!window.__VEGATUBE__));
   };
 
   var tries = 0;
@@ -257,13 +274,56 @@ const isMainFrameUrl = (url?: string): boolean => {
     return true;
   }
   try {
-    const {pathname} = new URL(url);
+    const {pathname} = new URL(url) as any;
     return MAIN_FRAME_PATHS.includes(pathname);
   } catch {
     // Unparseable URL: be conservative and treat it as main-frame.
     return true;
   }
 };
+
+// --- FYAISA pairing persistence (KeplerFileSystem; /data is per-app) --------
+type SavedPair = {host: string; token: string};
+
+const savePair = async (p: SavedPair) => {
+  try {
+    await KeplerFileSystem.writeStringToFile(STORE_PATH, JSON.stringify(p), 'UTF-8');
+    console.info(`[VegaTube] FYAISA pairing saved (${p.host})`);
+  } catch (e: any) {
+    console.error(`[VegaTube] could not save pairing: ${e?.message || e}`);
+  }
+};
+
+const loadPair = async (): Promise<SavedPair | null> => {
+  try {
+    if (!(await KeplerFileSystem.exists(STORE_PATH))) {
+      return null;
+    }
+    const p = JSON.parse(await KeplerFileSystem.readFileAsString(STORE_PATH, 'UTF-8'));
+    return p && p.host && p.token ? (p as SavedPair) : null;
+  } catch {
+    return null;
+  }
+};
+
+const clearPair = async () => {
+  try {
+    await KeplerFileSystem.removeFile(STORE_PATH);
+  } catch {
+    // Nothing to forget.
+  }
+};
+
+/** D-pad keypad for typing the PC address (dots and backspace included). */
+const HOST_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'];
+
+/**
+ * TV focus ring, same treatment as the FYAISA app: a thick amber border plus
+ * a glow so the selected control is obvious from the couch. focusBase keeps a
+ * transparent border so focusing never shifts layout.
+ */
+const focusRing = ({focused}: {focused: boolean}) =>
+  [styles.focusBase, focused && styles.focusedRing];
 
 export const App = () => {
   const webRef = useRef(null);
@@ -282,9 +342,19 @@ export const App = () => {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backDeliveredRef = useRef(true);
 
+  // FYAISA panel (startup menu): hub status, update check, PC pairing.
+  const [menu, setMenu] = useState<'hidden' | 'menu' | 'pair'>('menu');
+  const [pair, setPair] = useState<SavedPair | null>(null);
+  const [pairHost, setPairHost] = useState('');
+  const [pairCode, setPairCode] = useState<string | null>(null);
+  const [hubStatus, setHubStatus] = useState('Checking the FYAISA hub…');
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+  const [job, setJob] = useState<{status: string; log: string[]} | null>(null);
+  const menuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     console.info(
-      `[TizenTubeVega] v${APP_VERSION} (TizenTube v${TIZENTUBE_VERSION} @ ${TIZENTUBE_COMMIT.slice(0, 12)})`,
+      `[VegaTube] v${APP_VERSION} (TizenTube v${TIZENTUBE_VERSION} @ ${TIZENTUBE_COMMIT.slice(0, 12)})`,
     );
     return () => {
       if (retryTimerRef.current) {
@@ -311,7 +381,7 @@ export const App = () => {
    * Returning false lets the system handle it, which exits to the launcher.
    */
   useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBack', () => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       const web = webRef.current as any;
       if (!web?.injectJavaScript) {
         return false;
@@ -321,13 +391,97 @@ export const App = () => {
         backDeliveredRef.current = true;
       }
       web.injectJavaScript(BACK_SCRIPT);
-      console.info('[TizenTubeVega] Back -> POPUP_BACK (+ Escape)');
+      console.info('[VegaTube] Back -> POPUP_BACK (+ Escape)');
       // Always consume: at the root of the guide YouTube closes nothing, and
       // letting it fall through would exit the app on every stray Back press.
       return true;
     });
     return () => sub.remove();
   }, []);
+
+  // FYAISA panel: load saved pairing + check the hub for a new VegaTube
+  // version. The update check runs against the published catalog (no pairing
+  // needed); installing the update requires the paired PC bridge.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(HUB_CATALOG_URL);
+        const cat = await res.json();
+        if (cancelled) {
+          return;
+        }
+        const entry = (cat.apps || []).find((a: any) => a.id === VEGATUBE_APP_ID);
+        const hubVersion = entry?.version;
+        console.info(
+          `[VegaTube] hub check: ${(cat.apps || []).length} app(s), catalog VegaTube ${
+            hubVersion ? `v${hubVersion}` : 'not listed'
+          }`,
+        );
+        setHubStatus(
+          `FYAISA hub: ${(cat.apps || []).length} app(s) · VegaTube ${
+            hubVersion ? `v${hubVersion}` : 'listed'
+          }`,
+        );
+        if (hubVersion && hubVersion !== APP_VERSION) {
+          setUpdateVersion(hubVersion);
+          console.info(`[VegaTube] update available: v${APP_VERSION} -> v${hubVersion}`);
+        }
+      } catch {
+        if (!cancelled) {
+          setHubStatus('FYAISA hub unreachable (offline?)');
+        }
+      }
+
+      const saved = await loadPair();
+      if (cancelled || !saved) {
+        return;
+      }
+      setPair(saved);
+      try {
+        await Fyaisa.from(saved).catalog(); // token check: 401 => stale
+        console.info(`[VegaTube] FYAISA bridge reachable at ${saved.host}`);
+      } catch (e: any) {
+        if (e instanceof FyaisaError && e.status === 401) {
+          await clearPair();
+          if (!cancelled) {
+            setPair(null);
+          }
+          console.warn('[VegaTube] FYAISA pairing expired — re-pair from the menu');
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // The menu is a startup convenience, not a lockout — it steps aside on its
+  // own so YouTube is one press (or zero) away.
+  useEffect(() => {
+    if (menu !== 'menu') {
+      return;
+    }
+    menuTimerRef.current = setTimeout(() => setMenu('hidden'), 20000);
+    return () => {
+      if (menuTimerRef.current) {
+        clearTimeout(menuTimerRef.current);
+      }
+    };
+  }, [menu]);
+
+  // While the FYAISA menu is open, Back closes it instead of talking to
+  // YouTube. Declared after the YouTube Back effect so it runs first (LIFO).
+  useEffect(() => {
+    if (menu === 'hidden') {
+      return;
+    }
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setMenu('hidden');
+      return true;
+    });
+    return () => sub.remove();
+  }, [menu]);
 
   /**
    * Receive diagnostics from the injected prelude (window.ReactNativeWebView).
@@ -345,7 +499,7 @@ export const App = () => {
       switch (msg.type) {
         case 'TT_READY':
           console.info(
-            `[TizenTubeVega] injection ready (app v${msg.appVersion}, ` +
+            `[VegaTube] injection ready (app v${msg.appVersion}, ` +
               `TizenTube v${msg.ttVersion}, phase=${msg.phase ?? 'start'})`,
           );
           break;
@@ -368,14 +522,14 @@ export const App = () => {
    * TV Stick HD: the page loaded and played fine, yet nothing the script
    * defined ever existed (no h5vcc bridge, no ad block, no settings category).
    * The supported API is the imperative `injectJavaScript`, so we use that on
-   * every page load. The prelude sets a `window.__TIZENTUBE_VEGA__` sentinel,
+   * every page load. The prelude sets a `window.__VEGATUBE__` sentinel,
    * so re-running it (and the before-content-loaded prop, if a future OS
    * implements it) can never double-install the patches.
    */
   const injectTizenTube = useCallback(() => {
     const web = webRef.current as any;
     if (!web?.injectJavaScript) {
-      console.warn('[TizenTubeVega] injectJavaScript unavailable on this WebView');
+      console.warn('[VegaTube] injectJavaScript unavailable on this WebView');
       return;
     }
     try {
@@ -393,18 +547,18 @@ export const App = () => {
       web.injectJavaScript(buildTriggerScript(INJECTION_CHUNK_COUNT));
 
       console.info(
-        `[TizenTubeVega] injected ${(INJECTION_JS.length / 1024).toFixed(0)} KB ` +
+        `[VegaTube] injected ${(INJECTION_JS.length / 1024).toFixed(0)} KB ` +
           `of TizenTube script in ${INJECTION_CHUNK_COUNT} chunks ` +
           `(${INJECTION_CHUNK_SIZE / 1024} KB each)`,
       );
     } catch (err) {
-      console.error('[TizenTubeVega] injectJavaScript failed:', err);
+      console.error('[VegaTube] injectJavaScript failed:', err);
     }
   }, []);
 
   const onLoad = useCallback(
     (_event: WebViewNavigationEvent) => {
-      console.info('[TizenTubeVega] Page loading completed');
+      console.info('[VegaTube] Page loading completed');
       // A successful load resets the cold-start retry budget.
       autoRetryRef.current = 0;
       setLoadError(null);
@@ -416,7 +570,7 @@ export const App = () => {
   );
 
   const onLoadStart = useCallback((_event: WebViewNavigationEvent) => {
-    console.info('[TizenTubeVega] Page loading started');
+    console.info('[VegaTube] Page loading started');
     setPageLoaded(false);
   }, []);
 
@@ -428,7 +582,7 @@ export const App = () => {
    */
   const handleFailure = useCallback(
     (reason: string) => {
-      console.error(`[TizenTubeVega] ${reason}`);
+      console.error(`[VegaTube] ${reason}`);
       // Never leave the splash screen up on failure.
       hideSplashScreenCallback();
 
@@ -436,7 +590,7 @@ export const App = () => {
         const attempt = autoRetryRef.current + 1;
         const delay = RETRY_BASE_DELAY_MS * attempt;
         console.info(
-          `[TizenTubeVega] load failed (${reason}); auto-retry ${attempt}/${MAX_AUTO_RETRIES} in ${delay}ms`,
+          `[VegaTube] load failed (${reason}); auto-retry ${attempt}/${MAX_AUTO_RETRIES} in ${delay}ms`,
         );
         autoRetryRef.current = attempt;
         if (retryTimerRef.current) {
@@ -461,7 +615,7 @@ export const App = () => {
       // page. Only react when the document itself failed to load.
       if (!isMainFrameUrl(url)) {
         console.warn(
-          `[TizenTubeVega] ignoring non-fatal subresource error (${code}: ${description})`,
+          `[VegaTube] ignoring non-fatal subresource error (${code}: ${description})`,
         );
         return;
       }
@@ -492,6 +646,69 @@ export const App = () => {
     setPageLoaded(false);
     (webRef.current as any)?.reload();
   }, []);
+
+  // --- FYAISA panel actions -------------------------------------------------
+
+  const dismissMenu = useCallback(() => setMenu('hidden'), []);
+
+  /** Get a pairing code from the bridge, show it, wait for `fyaisa approve`. */
+  const startPair = useCallback(async () => {
+    const host = pairHost.trim();
+    if (!host) {
+      setHubStatus('Enter your PC address first (shown by fyaisa connect)');
+      return;
+    }
+    try {
+      setHubStatus('Requesting a pairing code…');
+      const {code} = await Fyaisa.requestCode(host, BRIDGE_PORT);
+      setPairCode(code);
+      setHubStatus(`On the PC:  fyaisa approve ${code}`);
+      const p = await Fyaisa.waitForApproval(host, code, BRIDGE_PORT);
+      await savePair(p);
+      setPair(p);
+      setPairCode(null);
+      setHubStatus('Paired — updates install through your PC');
+      setMenu('menu');
+      console.info('[VegaTube] paired with FYAISA bridge');
+    } catch (e: any) {
+      setPairCode(null);
+      setHubStatus(`Pairing failed: ${e?.message || e}`);
+    }
+  }, [pairHost]);
+
+  const forget = useCallback(async () => {
+    await clearPair();
+    setPair(null);
+    setHubStatus('PC forgotten');
+  }, []);
+
+  /** Queue a rebuild + reinstall of VegaTube on the PC; stream the log. */
+  const updateViaPc = useCallback(async () => {
+    if (!pair) {
+      return;
+    }
+    try {
+      const fy = Fyaisa.from(pair);
+      const {jobId} = await fy.install(VEGATUBE_APP_ID);
+      setJob({status: 'queued', log: []});
+      console.info(`[VegaTube] update job queued: ${jobId}`);
+      const iv = setInterval(async () => {
+        try {
+          const j = await fy.job(jobId);
+          setJob({status: j.status, log: (j.log || []).slice(-8)});
+          if (j.status === 'done' || j.status === 'error') {
+            clearInterval(iv);
+            console.info(`[VegaTube] update job ${j.status}`);
+          }
+        } catch {
+          clearInterval(iv);
+          setJob(prev => ({status: 'error', log: [...(prev?.log || []), 'bridge unreachable']}));
+        }
+      }, 2500);
+    } catch (e: any) {
+      setJob({status: 'error', log: [String(e?.message || e)]});
+    }
+  }, [pair]);
 
   return (
     <View style={styles.container}>
@@ -529,11 +746,13 @@ export const App = () => {
         // YouTube TV is a single-page app: in-app navigation does not fire
         // onLoad, so re-arm injection whenever a navigation is committed. The
         // prelude sentinel makes this a no-op when the page is unchanged.
-        onNavigationStateChange={(nav: any) => {
-          if (nav?.loading === false && nav?.url) {
-            injectTizenTube();
-          }
-        }}
+        {...({
+          onNavigationStateChange: (nav: any) => {
+            if (nav?.loading === false && nav?.url) {
+              injectTizenTube();
+            }
+          },
+        } as any)}
       />
 
       {loadError && (
@@ -543,16 +762,118 @@ export const App = () => {
           <Text style={styles.errorHint}>
             Check the Fire TV’s network connection, then retry.
           </Text>
-          <Pressable hasTVPreferredFocus onPress={retry} style={styles.retryButton}>
+          <KeplerPressable
+            hasTVPreferredFocus
+            onPress={retry}
+            style={state => [styles.retryButton, focusRing(state)]}>
             <Text style={styles.retryText}>Retry</Text>
-          </Pressable>
+          </KeplerPressable>
         </View>
       )}
 
       {!loadError && !pageLoaded && (
         <View style={styles.loadingOverlay} pointerEvents="none">
           <ActivityIndicator size="large" color="#ffffff" />
-          <Text style={styles.loadingText}>Loading TizenTube…</Text>
+          <Text style={styles.loadingText}>Loading VegaTube…</Text>
+        </View>
+      )}
+
+      {menu !== 'hidden' && (
+        <View style={styles.menuOverlay}>
+          <View style={styles.menuCard}>
+            <Text style={styles.menuTitle}>VegaTube v{APP_VERSION}</Text>
+            <Text style={styles.menuCredit}>A FYAISA example app</Text>
+            <Text style={styles.menuStatus}>{hubStatus}</Text>
+            {pair ? (
+              <Text style={styles.menuPaired}>Paired with {pair.host}</Text>
+            ) : null}
+
+            {menu === 'pair' ? (
+              <>
+                <Text style={styles.menuHint}>
+                  Enter your PC’s address, then Get pairing code. On the PC: fyaisa
+                  approve &lt;code&gt;
+                </Text>
+                <View style={styles.keypad}>
+                  {HOST_KEYS.map(k => (
+                    <KeplerPressable
+                      key={k}
+                      style={focusRing}
+                      onPress={() =>
+                        setPairHost(h => (k === '⌫' ? h.slice(0, -1) : h + k))
+                      }>
+                      <View style={styles.key}>
+                        <Text style={styles.keyText}>{k}</Text>
+                      </View>
+                    </KeplerPressable>
+                  ))}
+                </View>
+                <Text style={styles.menuHost}>{pairHost || '…'}</Text>
+                {pairCode ? (
+                  <Text style={styles.menuCode}>Code: {pairCode}</Text>
+                ) : null}
+                <KeplerPressable hasTVPreferredFocus style={focusRing} onPress={startPair}>
+                  <View style={styles.menuBtn}>
+                    <Text style={styles.menuBtnText}>
+                      {pairCode ? 'Waiting for approval…' : 'Get pairing code'}
+                    </Text>
+                  </View>
+                </KeplerPressable>
+                <KeplerPressable style={focusRing} onPress={() => setMenu('menu')}>
+                  <View style={styles.menuBtnGhost}>
+                    <Text style={styles.menuBtnText}>Back</Text>
+                  </View>
+                </KeplerPressable>
+              </>
+            ) : (
+              <>
+                {updateVersion ? (
+                  <KeplerPressable hasTVPreferredFocus style={focusRing} onPress={updateViaPc}>
+                    <View style={styles.menuBtn}>
+                      <Text style={styles.menuBtnText}>
+                        Update to v{updateVersion} via PC
+                      </Text>
+                    </View>
+                  </KeplerPressable>
+                ) : null}
+                <KeplerPressable
+                  hasTVPreferredFocus={!updateVersion}
+                  style={focusRing}
+                  onPress={() => setMenu('pair')}>
+                  <View style={styles.menuBtnGhost}>
+                    <Text style={styles.menuBtnText}>
+                      {pair ? 'Pair a different PC' : 'Pair with PC'}
+                    </Text>
+                  </View>
+                </KeplerPressable>
+                {pair ? (
+                  <KeplerPressable style={focusRing} onPress={forget}>
+                    <View style={styles.menuBtnGhost}>
+                      <Text style={styles.menuBtnText}>Forget PC</Text>
+                    </View>
+                  </KeplerPressable>
+                ) : null}
+                <KeplerPressable style={focusRing} onPress={dismissMenu}>
+                  <View style={styles.menuBtnGhost}>
+                    <Text style={styles.menuBtnText}>Continue to YouTube</Text>
+                  </View>
+                </KeplerPressable>
+                {job ? (
+                  <>
+                    <Text style={styles.menuJobStatus}>Update: {job.status}</Text>
+                    {job.log.map((l, i) => (
+                      <Text key={i} style={styles.menuJobLine} numberOfLines={2}>
+                        {l}
+                      </Text>
+                    ))}
+                  </>
+                ) : null}
+              </>
+            )}
+            <Text style={styles.menuFooter}>
+              Powered by FYAISA — run “fyaisa connect” on your PC
+            </Text>
+          </View>
         </View>
       )}
     </View>
@@ -607,5 +928,67 @@ const styles = StyleSheet.create({
   retryText: {
     color: '#ffffff',
     fontSize: 18,
+  },
+
+  // --- FYAISA startup menu -------------------------------------------------
+  menuOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(6,6,10,0.94)',
+    padding: 56,
+    justifyContent: 'center',
+  },
+  menuCard: {maxWidth: 940},
+  menuTitle: {color: '#ffffff', fontSize: 40, fontWeight: '700'},
+  menuCredit: {color: '#8b8b99', fontSize: 16, marginTop: 4},
+  menuStatus: {color: '#7ee787', fontSize: 17, marginTop: 14},
+  menuPaired: {color: '#9fd0ff', fontSize: 15, marginTop: 4},
+  menuHint: {color: '#a9a9b8', fontSize: 15, marginTop: 12, lineHeight: 21},
+  menuHost: {color: '#ffffff', fontSize: 26, fontFamily: 'monospace', marginTop: 10},
+  menuCode: {color: '#ffb02e', fontSize: 24, fontWeight: '700', marginTop: 8},
+  keypad: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12, maxWidth: 456},
+  key: {
+    width: 64,
+    height: 54,
+    margin: 4,
+    borderRadius: 8,
+    backgroundColor: '#23232d',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  keyText: {color: '#ffffff', fontSize: 22},
+  menuBtn: {
+    backgroundColor: '#1c7d32',
+    borderRadius: 6,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    marginTop: 16,
+    alignSelf: 'flex-start',
+  },
+  menuBtnGhost: {
+    backgroundColor: '#1e1e28',
+    borderRadius: 6,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    marginTop: 12,
+    alignSelf: 'flex-start',
+  },
+  menuBtnText: {color: '#ffffff', fontSize: 18},
+  menuFooter: {color: '#5c5c6b', fontSize: 13, marginTop: 24},
+  menuJobStatus: {color: '#7ee787', fontSize: 15, marginTop: 14},
+  menuJobLine: {
+    color: '#8b8b99',
+    fontSize: 12,
+    fontFamily: 'monospace',
+    marginTop: 2,
+  },
+  /** Transparent base border so the focus ring never shifts layout. */
+  focusBase: {borderWidth: 3, borderColor: 'transparent', borderRadius: 8},
+  focusedRing: {
+    borderColor: '#ffb02e',
+    shadowColor: '#ffb02e',
+    shadowOpacity: 0.85,
+    shadowRadius: 10,
+    shadowOffset: {width: 0, height: 0},
+    elevation: 10,
   },
 });
