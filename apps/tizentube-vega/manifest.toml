@@ -1,0 +1,86 @@
+schema-version = 1
+
+[package]
+title = "TizenTube"
+version = "1.0.0"
+id = "app.tizentube.vega"
+
+# SDK 0.24's OS-version registry only mints "1.2". If you need to support a
+# Fire TV whose firmware is still on Vega OS 1.1 (e.g. an un-updated Fire TV
+# Stick 4K Select), install the older SDK — `vega sdk install 0.23.9221`,
+# `vega sdk use 0.23.9221` — and set min/target to "1.1" with the matching
+# "/com.amazon.vega.os@IVega_1_1" module below.
+[os.version]
+min = "1.2"
+target = "1.2"
+
+[needs]
+[[needs.module]]
+id = "/com.amazon.vega.os@IVega_1_2"
+
+# DRM (Widevine) is required for YouTube playback of protected content.
+[[needs.privilege]]
+id = "com.amazon.privilege.security.file-sharing"
+
+[[needs.module]]
+id = "/com.amazon.kepler.keplerscript_4@IKeplerScript_0"
+
+[[needs.module]]
+id = "/com.amazon.kepler.webview_4@IWebview_4"
+
+
+
+[components]
+[[components.interactive]]
+id = "app.tizentube.vega.main"
+runtime-module = "/com.amazon.kepler.runtime.react_native_kepler_4@IReactNativeKepler_0"
+launch-type = "singleton"
+categories = ["com.amazon.category.main"]
+
+[wants]
+# Web renderer service for rendering web content
+[[wants.service]]
+id = "com.amazon.webview.renderer_service"
+
+# If Web App needs keyboard support
+[[wants.service]]
+id = "com.amazon.inputmethod.service"
+
+# If Web App needs video playback
+[[wants.service]]
+id = "com.amazon.media.server"
+
+# Required for emitting metrics from video playback
+[[wants.service]]
+id = "com.amazon.mediametrics.service"
+
+# Required for video playback on stable APIs
+[[wants.service]]
+id = "com.amazon.mediabuffer.service"
+[[wants.service]]
+id = "com.amazon.mediatransform.service"
+
+# If Web App needs audio playback
+[[wants.service]]
+id = "com.amazon.audio.stream"
+
+# Required for audio management features to work in WebView, features like audio focus, volume control
+[[wants.service]]
+id = "com.amazon.audio.control"
+
+# Encrypted media playback (Widevine DRM — YouTube requires it)
+[[wants.service]]
+id = "com.amazon.drm.key"
+[[wants.service]]
+id = "com.amazon.drm.crypto"
+
+# To enable accessibility support for your app, we recommend you add the UCC service with the Service Registrar
+[[wants.service]]
+id = "com.amazon.kepler.ucc.publisher"
+
+# Enable Group-IPC to access media services
+[[wants.service]]
+id = "com.amazon.gipc.uuid.*"
+[offers]
+[[offers.service]]
+id = "com.amazon.gipc.uuid.*"

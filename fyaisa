@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+#
+# fyaisa — FYAISA hub client
+#
+# Lists, builds and installs homebrew from the FYAISA catalog onto Vega OS
+# Fire TV devices.
+#
+#   fyaisa list                      show the catalog
+#   fyaisa search <term>             filter by name/tag/description
+#   fyaisa info <app-id>             show one app in detail
+#   fyaisa install <app-id>          build if needed, then install on the device
+#   fyaisa update <app-id>           rebuild a locally-edited app and reinstall
+#   fyaisa uninstall <app-id>        remove from the device
+#   fyaisa devices                   list Fire TVs visible to the Vega CLI
+#   fyaisa connect [--lan] [--port N] [--tunnel]
+#                                     pair this PC with a Fire TV so the FYAISA
+#                                     app on the TV can queue builds/installs
+#
+# Options:
+#   --repo <url>     catalog repo (default: https://github.com/AaronYTDev/FYAISA)
+#   --dir <path>     local FYAISA checkout to build from (default: this script's repo)
+#   --ip <host:port> target a specific device
+#   --debug          keep going and show more output
+#
+# WHY INSTALLING HAPPENS HERE: a Vega app cannot install other .vpkg packages.
+# Package management is a host-side operation (vega device install-app). So this
+# CLI is the installer; the on-device FYAISA app is the catalog and downloader.
+#
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_URL="https://github.com/AaronYTDev/FYAISA"
+LOCAL_DIR="${FYAISA_DIR:-$SCRIPT_DIR}"
+DEVICE_IP=""
+BUILD_TYPE="Release"
+DEBUG=0
+NODE_BIN="$HOME/.local/nodejs/node-v22.23.3-linux-x64/bin"
+
+RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; CYN=$'\033[36m'; DIM=$'\033[2m'; RST=$'\033[0m'
+
+info() { printf '%s==>%s %s\n' "$CYN" "$RST" "$1"; }
+warn() { printf '%s[warn]%s %s\n' "$YEL" "$RST" "$1"; }
+ok()   { printf '%s[ok]%s %s\n' "$GRN" "$RST" "$1"; }
+die()  { printf '%s[error]%s %s\n' "$RED" "$RST" "$1"; exit 1; }
+
+# --- dependencies ------------------------------------------------------------
+need() { command -v "$1" >/dev/null 2>&1 || die "'$1' not found. $2"; }
+need_vega() {
+  need vega "Install the Vega SDK: curl -fsSL https://sdk-installer.vega.labcollab.net/get_vvm.sh | bash && source ~/vega/env"
+}
+setup_env() {
+  [[ -d "$NODE_BIN" ]] && export PATH="$NODE_BIN:$PATH"
+  need_vega
+  need curl "Install curl."
+  need python3 "Install python3 (used to read catalog.json)."
+}
+
+# --- args --------------------------------------------------------------------
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo) REPO_URL="$2"; shift 2 ;;
+    --dir)  LOCAL_DIR="$2"; shift 2 ;;
+    --ip)   DEVICE_IP="$2"; shift 2 ;;
+    --debug) DEBUG=1; shift ;;
+    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) break ;;
+  esac
+done
+CMD="${1:-list}"; shift || true
+
+catalog_url() { printf '%s/raw/main/catalog.json' "${REPO_URL%.git}"; }
+
+fetch_catalog() {
+  local cache url
+  cache="$(mktemp)"; url="$(catalog_url)"
+  curl -fsSL "$url" -o "$cache" 2>/dev/null || {
+    [[ -f "$LOCAL_DIR/catalog.json" ]] && { cat "$LOCAL_DIR/catalog.json"; return 0; }
+    die "Could not fetch $url and no local catalog at $LOCAL_DIR/catalog.json"
+  }
+  cat "$cache"; rm -f "$cache"
+}
+
+# Query the catalog with python3 (jq is not guaranteed to be installed).
+# NOTE: the script is passed with -c, not a heredoc, because the catalog itself
+# arrives on stdin.
+PY_QUERY=$(cat <<'PY'
+import json, sys
+mode = sys.argv[1]
+apps = json.load(sys.stdin).get("apps", [])
+term = (sys.argv[2] if len(sys.argv) > 2 else "").lower()
+
+def f(a, k, d=""):
+    v = a.get(k, d)
+    return d if v is None else v
+
+if mode == "list":
+    for a in apps:
+        print("{:<30} {:<16} {}".format(f(a,'id'), f(a,'name'), f(a,'status','?')))
+        s = f(a,'summary')
+        if s:
+            print("  " + s)
+        tags = a.get("tags", [])
+        if tags:
+            print("  tags: " + ", ".join(tags))
+        print()
+elif mode == "search":
+    hits = 0
+    for a in apps:
+        hay = " ".join([f(a,'id'), f(a,'name'), f(a,'summary'), f(a,'description')] + a.get("tags", [])).lower()
+        if term in hay:
+            hits += 1
+            print("{:<30} {:<16} {}".format(f(a,'id'), f(a,'name'), f(a,'summary')))
+    if not hits:
+        print("no matches")
+elif mode == "info":
+    want = sys.argv[2]
+    a = next((x for x in apps if x.get("id") == want), None)
+    if not a:
+        print("NOTFOUND"); sys.exit(3)
+    for k in ("id","name","summary","description","license","author","homepage",
+              "minOsVersion","targetOsVersion","architectures","status","updated","path"):
+        v = a.get(k)
+        if isinstance(v, list):
+            v = ", ".join(map(str, v))
+        if v:
+            print("{}: {}".format(k, v))
+    if a.get("tags"):
+        print("tags: " + ", ".join(a["tags"]))
+    for n in a.get("notes", []):
+        print("note: " + n)
+PY
+)
+
+cat_query() {
+  local mode="$1"; shift
+  python3 -c "$PY_QUERY" "$mode" "$@"
+}
+
+app_field() {
+  fetch_catalog | python3 -c "
+import json,sys
+d=json.load(sys.stdin); want=sys.argv[1]; field=sys.argv[2]
+a=next((x for x in d.get('apps',[]) if x.get('id')==want), None)
+print('' if a is None else a.get(field,''))" "$1" "$2"
+}
+
+app_path() { app_field "$1" path; }
+
+# --- device ------------------------------------------------------------------
+device_targets() {
+  if [[ -n "$DEVICE_IP" ]]; then
+    vega exec vda connect "$DEVICE_IP" >/dev/null 2>&1
+  fi
+  local addrs
+  addrs="$(vega device list 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+')"
+  if [[ -z "$addrs" ]]; then
+    vega exec vda connect "${DEVICE_IP:-}" >/dev/null 2>&1
+    addrs="$(vega device list 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+')"
+  fi
+  printf '%s' "$addrs"
+}
+
+require_device() {
+  local addrs; addrs="$(device_targets)"
+  [[ -n "$addrs" ]] || die "No Vega device found. Enable Developer Mode and set Connection mode to TCP/IP, then run: fyaisa devices"
+  ok "Device: $(printf '%s' "$addrs" | tr '\n' ' ')"
+}
+
+# --- app source --------------------------------------------------------------
+# Apps live in apps/<dir>/ and are full Vega projects, exactly like TizenTube Vega.
+app_src_dir() {
+  local rel; rel="$(app_path "$1")"
+  [[ -n "$rel" ]] || die "App '$1' is not in the catalog."
+  local dir="$LOCAL_DIR/$rel"
+  [[ -d "$dir" ]] || die "App source not found at $dir
+  Clone the hub first:  git clone $REPO_URL $LOCAL_DIR"
+  printf '%s' "$dir"
+}
+
+build_app() {
+  local id="$1" dir; dir="$(app_src_dir "$id")"
+  info "Building $id from $dir"
+  (
+    cd "$dir" || exit 1
+    if [[ ! -d node_modules ]]; then
+      info "Installing dependencies (first run)…"
+      npm install --no-audit --no-fund || exit 1
+    fi
+    if [[ $DEBUG -eq 1 ]]; then
+      npm run "build:$(tr '[:upper:]' '[:lower:]' <<<"$BUILD_TYPE")"
+    else
+      npm run "build:$(tr '[:upper:]' '[:lower:]' <<<"$BUILD_TYPE")" 2>&1 | tail -15
+    fi
+  ) || die "Build failed for $id"
+  ok "Build finished"
+}
+
+# --- commands ----------------------------------------------------------------
+cmd_list() {
+  local c; c="$(fetch_catalog)"
+  printf '%s' "$c" | cat_query list
+}
+
+cmd_search() {
+  [[ -n "$1" ]] || die "Usage: fyaisa search <term>"
+  fetch_catalog | cat_query search "$1"
+}
+
+cmd_info() {
+  [[ -n "$1" ]] || die "Usage: fyaisa info <app-id>"
+  local out; out="$(fetch_catalog | cat_query info "$1")"
+  [[ "$out" == "NOTFOUND" ]] && die "App '$1' not found in catalog."
+  printf '%s\n' "$out"
+}
+
+cmd_install() {
+  [[ $# -ge 1 ]] || die "Usage: fyaisa install <app-id>"
+  local id="$1"
+  cmd_info "$id" >/dev/null
+  require_device
+  build_app "$id"
+  local dir; dir="$(app_src_dir "$id")"
+  info "Installing $id on the device"
+  if [[ -n "$DEVICE_IP" ]]; then
+    (cd "$dir" && vega device install-app --dir . -b "$BUILD_TYPE" --device "$DEVICE_IP")
+  else
+    (cd "$dir" && vega device install-app --dir . -b "$BUILD_TYPE")
+  fi
+  ok "Installed $id"
+}
+
+cmd_update() {
+  [[ $# -ge 1 ]] || die "Usage: fyaisa update <app-id>"
+  info "Rebuilding $1 from your local checkout and reinstalling"
+  (cd "$LOCAL_DIR" && git pull --ff-only 2>/dev/null) || warn "git pull skipped/failed (continuing with local copy)"
+  cmd_install "$1"
+}
+
+cmd_uninstall() {
+  [[ $# -ge 1 ]] || die "Usage: fyaisa uninstall <component-id>"
+  info "Uninstalling $1"
+  if [[ -n "$DEVICE_IP" ]]; then
+    vega device uninstall-app --appName "$1" --device "$DEVICE_IP"
+  else
+    vega device uninstall-app --appName "$1"
+  fi
+  ok "Removed $1"
+}
+
+# ---------------------------------------------------------------------------
+# connect — pair a Fire TV with this PC so the TV can queue installs
+# ---------------------------------------------------------------------------
+cmd_connect() {
+  local port=47821 lan=0 tunnel=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port)   port="$2"; shift 2 ;;
+      --lan)    lan=1; shift ;;
+      --tunnel) tunnel=1; shift ;;
+      --hub)    LOCAL_DIR="$2"; shift 2 ;;
+      *) die "Unknown option for connect: $1" ;;
+    esac
+  done
+
+  need_vega
+  [[ -d "$NODE_BIN" ]] && export PATH="$NODE_BIN:$PATH"
+  need node "Install Node.js 18+."
+
+  # Does the hub dir look like a checkout?
+  if [[ ! -f "$LOCAL_DIR/catalog.json" ]]; then
+    warn "No catalog.json in $LOCAL_DIR — the bridge will report an empty catalog."
+    warn "Clone the hub:  git clone $REPO_URL $LOCAL_DIR"
+  fi
+
+  local args=("$LOCAL_DIR/bridge/bridge.js" "--port" "$port" "--hub-dir" "$LOCAL_DIR")
+  [[ $lan -eq 1 ]] && args+=("--lan")
+  [[ $tunnel -eq 1 ]] && args+=("--tunnel")
+
+  if [[ ! -f "$LOCAL_DIR/bridge/bridge.js" ]]; then
+    die "Bridge not found at $LOCAL_DIR/bridge/bridge.js"
+  fi
+
+  exec node "${args[@]}"
+}
+
+cmd_devices() {
+  info "Fire TVs visible to the Vega CLI"
+  vega device list
+  local addrs; addrs="$(device_targets)"
+  if [[ -z "$addrs" ]]; then
+    warn "None found. Check Developer Mode + Connection mode TCP/IP, then:"
+    warn "  vega exec vda connect <ip>:5555"
+  fi
+}
+
+main() {
+  setup_env
+  case "$CMD" in
+    list) cmd_list ;;
+    search) cmd_search "${1:-}" ;;
+    info) cmd_info "${1:-}" ;;
+    install) cmd_install "${1:-}" ;;
+    update) cmd_update "${1:-}" ;;
+    uninstall) cmd_uninstall "${1:-}" ;;
+    devices) cmd_devices ;;
+    connect) cmd_connect "$@" ;;
+    *) die "Unknown command: $CMD  (try: fyaisa --help)" ;;
+  esac
+}
+
+main "$@"

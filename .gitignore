@@ -1,0 +1,10 @@
+node_modules/
+build/
+dist/
+buildinfo.json
+*.vpkg
+.DS_Store
+.idea/
+.vscode/
+*.swp
+npm-debug.log*
