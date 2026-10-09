@@ -22,6 +22,7 @@ import {
   View,
 } from 'react-native';
 import {Pressable} from '@amazon-devices/react-native-kepler';
+import {KeplerFileSystem} from '@amazon-devices/kepler-file-system';
 import {
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
@@ -58,6 +59,61 @@ type Catalog = { hub?: {name?: string; tagline?: string}; apps?: HubApp[] };
  * ------------------------------------------------------------------------- */
 const BRIDGE_PORT = 47821;
 const PAIR_POLL_MS = 2000;
+/**
+ * Persisted pairing, so the TV doesn't forget its PC on every restart.
+ *
+ * Storage notes (learned the hard way):
+ *  - AsyncStorage is NOT available on Vega OS: installing it succeeds at
+ *    build time, but at runtime the JS bridge reports
+ *      [AutoLinkService] Library 'RNAsyncStorage' not found in any source
+ *    and every call silently no-ops. Use Amazon's KeplerFileSystem
+ *    TurboModule instead.
+ *  - The app runs sandboxed: its writable, reboot-persistent directory is
+ *    /data (per-app, not shared — the KeplerFileSystem README documents the
+ *    full sandbox layout: /pkg read-only, /data persistent, /tmp volatile).
+ *    It is NOT the /data that `vega device run-cmd` sees.
+ *  - The encoding argument must be 'UTF-8' (uppercase); 'utf-8' makes the
+ *    native side throw com.amazon.kepler.io.IoError.
+ */
+type SavedPair = {host: string; token: string};
+
+const STORE_PATH = '/data/bridge.json';
+
+const savePair = async (p: SavedPair) => {
+  try {
+    await KeplerFileSystem.writeStringToFile(STORE_PATH, JSON.stringify(p), 'UTF-8');
+    console.info(`[FYAISA] pairing saved to ${STORE_PATH}`);
+  } catch (e: any) {
+    console.error(`[FYAISA] could not save pairing: ${e?.message || e}`);
+  }
+};
+
+const loadPair = async (): Promise<SavedPair | null> => {
+  try {
+    if (!(await KeplerFileSystem.exists(STORE_PATH))) {
+      return null;
+    }
+    const raw = await KeplerFileSystem.readFileAsString(STORE_PATH, 'UTF-8');
+    const p = JSON.parse(raw);
+    if (p && p.host && p.token) {
+      console.info(`[FYAISA] pairing restored from ${STORE_PATH}`);
+      return p as SavedPair;
+    }
+    return null;
+  } catch (e: any) {
+    console.error(`[FYAISA] could not read saved pairing: ${e?.message || e}`);
+    return null;
+  }
+};
+
+const clearPair = async () => {
+  try {
+    await KeplerFileSystem.removeFile(STORE_PATH);
+    console.info(`[FYAISA] pairing cleared (${STORE_PATH})`);
+  } catch {
+    // Missing file is fine — nothing to forget.
+  }
+};
 
 type PairState = {
   host: string | null;
@@ -109,6 +165,60 @@ export const App = () => {
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
+  // Restore a previous pairing on launch. React state alone is lost on every
+  // app restart, which made the Install button disappear after a reboot even
+  // though the PC was still paired.
+  //
+  // We then verify the saved token against the bridge: GET /catalog requires
+  // X-FYAISA-Token, so a 401 means the bridge regenerated its token (e.g.
+  // ~/.fyaisa/bridge.json was deleted) and we must re-pair. A network error
+  // just means the PC is offline — keep the pairing, it still works when the
+  // PC is back on the same network.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const saved = await loadPair();
+      if (cancelled) return;
+      if (!saved) {
+        console.info('[FYAISA] no saved pairing');
+        return;
+      }
+      console.info('[FYAISA] restoring saved pairing');
+      setPair(p => ({
+        ...p,
+        host: saved.host,
+        token: saved.token,
+        status: 'paired',
+        message: 'Connected',
+      }));
+      try {
+        const res = await fetch(`http://${saved.host}:${BRIDGE_PORT}/catalog`, {
+          method: 'GET',
+          headers: {'X-FYAISA-Token': saved.token},
+        });
+        if (res.status === 401) {
+          console.warn('[FYAISA] saved token rejected by bridge — clearing pairing');
+          await clearPair();
+          if (!cancelled) {
+            setPair(p => ({
+              ...p,
+              token: null,
+              status: 'idle',
+              message: 'Pairing expired — pair again',
+            }));
+          }
+        }
+      } catch {
+        // PC unreachable right now — stay paired; it may come back when the
+        // PC is on the same network.
+        console.info('[FYAISA] bridge unreachable during restore check (PC offline?)');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const bridgeFetch = useCallback(
     async (p: string, opts: RequestInit = {}) => {
       if (!base) throw new Error('no bridge host');
@@ -137,6 +247,18 @@ export const App = () => {
     }
     try {
       setPair(p => ({...p, status: 'requesting', message: 'Requesting code…'}));
+      // Check the bridge is actually reachable + our token is still accepted
+      // before asking the user to fetch a code.
+      try {
+        await bridgeFetch('/catalog');
+      } catch (e: any) {
+        setPair(p => ({
+          ...p,
+          status: 'error',
+          message: `Bridge unreachable or pairing stale (${e.message}). Start \`fyaisa connect --lan\` on the PC, or re-pair.`,
+        }));
+        return;
+      }
       const {code} = await bridgeFetch('/pair/request', {method: 'POST'});
       setPair(p => ({...p, code, status: 'awaiting', message: `Enter code ${code} on your PC`}));
       // Poll for approval; the bridge approves once the user types the code.
@@ -149,12 +271,19 @@ export const App = () => {
               method: 'POST',
               body: JSON.stringify({code, device: 'fyaisa-app'}),
             });
-            setPair(p => ({
-              ...p,
-              token: ok.token,
-              status: 'paired',
-              message: 'Connected',
-            }));
+            setPair(p => {
+              // Persist from inside the updater so we read the latest host
+              // rather than a stale closure value.
+              if (p.host) {
+                savePair({host: p.host, token: ok.token});
+              }
+              return {
+                ...p,
+                token: ok.token,
+                status: 'paired',
+                message: 'Connected',
+              };
+            });
             console.info('[FYAISA] paired with bridge');
           }
         } catch (e: any) {
@@ -308,6 +437,18 @@ export const App = () => {
                 {pair.status === 'paired' ? 'Re-pair' : 'Get pairing code'}
               </Text>
             </Pressable>
+
+            {pair.status === 'paired' ? (
+              <Pressable
+                style={styles.forgetBtn}
+                onPress={() => {
+                  clearPair();
+                  setPair(p => ({...p, token: null, code: null, status: 'idle', message: 'Pairing forgotten'}));
+                  console.info('[FYAISA] pairing cleared');
+                }}>
+                <Text style={styles.forgetText}>Forget this PC</Text>
+              </Pressable>
+            ) : null}
           </View>
 
           <Pressable hasTVPreferredFocus style={styles.backBtn} onPress={() => setSelectedId(null)}>
@@ -371,10 +512,10 @@ export const App = () => {
               the computer connected to your Fire TV:
             </Text>
             <Text style={styles.code}>fyaisa install {selected.id}</Text>
-            {pair.status === 'paired' ? (
+            {pair.status === 'paired' && pair.host ? (
               <>
                 <Text style={styles.howtoBody}>
-                  …or install from right here using the paired PC:
+                  …or install from right here using the paired PC ({pair.host}):
                 </Text>
                 <Pressable
                   hasTVPreferredFocus
@@ -585,6 +726,15 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     borderRadius: 6,
   },
+  forgetBtn: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: '#3a2020',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 6,
+  },
+  forgetText: {color: '#e57373', fontSize: 16},
   job: {marginTop: 14},
   jobStatus: {color: '#7ee787', fontSize: 15, marginBottom: 6},
   jobLine: {color: '#8b8b99', fontSize: 12, fontFamily: 'monospace'},
