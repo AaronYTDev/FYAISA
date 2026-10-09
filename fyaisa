@@ -28,7 +28,16 @@
 #
 set -uo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve through symlinks: when installed as ~/.local/bin/fyaisa -> repo/fyaisa,
+# $0 is the symlink, so SCRIPT_DIR would point at ~/.local/bin and every
+# relative path (catalog.json, bridge/) would be wrong.
+_src="${BASH_SOURCE[0]}"
+while [ -L "$_src" ]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 REPO_URL="https://github.com/AaronYTDev/FYAISA"
 LOCAL_DIR="${FYAISA_DIR:-$SCRIPT_DIR}"
 DEVICE_IP=""

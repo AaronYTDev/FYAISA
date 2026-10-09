@@ -2,7 +2,7 @@
   "$schema": "https://fyaisa.dev/schema/catalog-v1.json",
   "hub": {
     "name": "FYAISA",
-    "tagline": "Fuck You Amazon, I'm Sideloading Anyways",
+    "tagline": "A community hub for sideloaded homebrew on Amazon's Vega OS Fire TV devices.",
     "description": "A community hub for sideloaded homebrew on Amazon's Vega OS Fire TV devices.",
     "repo": "https://github.com/AaronYTDev/FYAISA",
     "appsPath": "apps",
