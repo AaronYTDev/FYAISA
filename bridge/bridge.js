@@ -201,7 +201,7 @@ const server = http.createServer(async (req, res) => {
     const code = String(Math.floor(100000 + Math.random() * 900000));
     pairings.set(code, { expires: Date.now() + PAIR_TTL_MS, approved: false });
     log(`pairing requested, code ${code} (valid 10 min)`);
-    console.log(`\n  Pairing code: ${code}\n  Enter this on the Fire TV within 10 minutes.\n`);
+    console.log(`\n  Pairing code: ${code}\n  The Fire TV shows the same code in FYAISA → Connect.\n  Approve it on this PC with:\n\n    fyaisa approve ${code}\n`);
     return json(res, 200, { code, expiresIn: PAIR_TTL_MS / 1000 });
   }
 

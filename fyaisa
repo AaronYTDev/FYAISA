@@ -15,6 +15,7 @@
 #   fyaisa connect [--lan] [--port N] [--tunnel]
 #                                     pair this PC with a Fire TV so the FYAISA
 #                                     app on the TV can queue builds/installs
+#   fyaisa approve <code>            approve the pairing code shown on the TV
 #
 # Options:
 #   --repo <url>     catalog repo (default: https://github.com/AaronYTDev/FYAISA)
@@ -292,6 +293,32 @@ cmd_connect() {
   exec node "${args[@]}"
 }
 
+cmd_approve() {
+  local code="${1:-}" port=47821 host=127.0.0.1
+  shift || true
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port) port="$2"; shift 2 ;;
+      --host) host="$2"; shift 2 ;;
+      *) die "Unknown option for approve: $1" ;;
+    esac
+  done
+  [[ "$code" =~ ^[0-9]{6}$ ]] || die "Usage: fyaisa approve <6-digit-code> [--port N] [--host H]"
+  need curl
+  local out
+  if ! out="$(curl -sS --max-time 10 -X POST "http://$host:$port/pair/approve" \
+      -H 'Content-Type: application/json' \
+      -d "{\"code\":\"$code\",\"device\":\"fyaisa-cli\"}" 2>&1)"; then
+    die "Could not reach the bridge at $host:$port — is 'fyaisa connect' running? ($out)"
+  fi
+  if grep -q '"ok":true' <<<"$out"; then
+    info "Approved — the Fire TV received its pairing token."
+    printf '%b\n' "${DIM}The Install button appears in the FYAISA app now.${RST}"
+  else
+    die "Bridge refused the code: $out"
+  fi
+}
+
 cmd_devices() {
   info "Fire TVs visible to the Vega CLI"
   vega device list
@@ -312,6 +339,7 @@ main() {
     update) cmd_update "${1:-}" ;;
     uninstall) cmd_uninstall "${1:-}" ;;
     devices) cmd_devices ;;
+    approve) cmd_approve "$@" ;;
     connect) cmd_connect "$@" ;;
     *) die "Unknown command: $CMD  (try: fyaisa --help)" ;;
   esac

@@ -19,13 +19,15 @@ Fire TV.
 ```
 FYAISA/
 ├── catalog.json              # the hub index — every app registers here
-├── fyaisa                    # host CLI: list / search / build / install / connect
+├── fyaisa                    # host CLI: list / search / build / install / connect / approve
 ├── apps/
 │   ├── README.md             # the app format (contract for contributors)
 │   └── tizentube-vega/       # reference app — ad-free YouTube for Vega
 ├── bridge/
 │   ├── bridge.js             # PC-side bridge for pairing with the TV app
 │   └── README.md             # bridge API + security model
+├── docs/
+│   └── HOMEBREW.md           # developer guide: Vega CLI, pairing, platform gotchas
 └── installer/                # the FYAISA app (on-device catalog browser)
 ```
 
@@ -76,8 +78,16 @@ fyaisa connect --lan
 ```
 
 Then on the TV: **FYAISA → Connect** → type the PC address with the D-pad
-keypad (`192`, `.`, …) → **Get pairing code** → type the 6-digit code the PC
-printed → paired.
+keypad (`192`, `.`, …) → **Get pairing code**. The 6-digit code appears on the
+TV *and* in the bridge's terminal — approve it **on the PC**:
+
+```bash
+fyaisa approve 126147
+```
+
+The TV picks up its pairing token automatically and the app is paired. The
+pairing is remembered on the TV (across restarts and reboots), so it's a
+one-time step per PC.
 
 Any app's detail screen then shows **Install via PC**, which queues a real
 build + `vega device install-app` on your machine and streams the build log back
@@ -116,11 +126,17 @@ Only do that on networks you trust — anyone who knows the pairing code and tok
 can queue builds on your machine. Prefer LAN.
 
 
+## Add your own app
 
 Apps are ordinary Vega projects — the format is documented in
 [`apps/README.md`](apps/README.md), and `apps/tizentube-vega` is the reference
 implementation. In short: copy it, change `manifest.toml` + `package.json`,
 register the entry in `catalog.json`, open a PR.
+
+Building homebrew for Vega OS — setting up the Vega CLI, pairing the TV app,
+and the platform gotchas that will bite you (AsyncStorage, the app sandbox,
+TV focus, log-stream quirks) — is covered in
+[`docs/HOMEBREW.md`](docs/HOMEBREW.md).
 
 ## Why builds happen on your machine
 
@@ -133,10 +149,10 @@ repo's Releases page; the catalog's `install` block describes how to get one.
 
 | Component | State |
 | --- | --- |
-| `fyaisa` CLI | Working — list / search / info / install / update / uninstall / devices / connect |
-| `fyaisa connect` bridge | Working — pairing, auth, and a real end-to-end install verified on a Fire TV Stick HD |
-| Catalog | `catalog.json` schema v1 |
-| FYAISA app | Builds, installs, and launches on a Fire TV Stick HD; shows the built-in fallback list until `catalog.json` is pushed. Pairing UI implemented; the TV→PC hop hasn't been exercised from the stick yet |
+| `fyaisa` CLI | Working — list / search / info / install / update / uninstall / devices / connect / approve |
+| `fyaisa connect` bridge | Working — pairing (incl. `fyaisa approve`), token auth, and real end-to-end installs verified on a Fire TV Stick HD |
+| Catalog | `catalog.json` schema v1, served from this repo |
+| FYAISA app | Working on a Fire TV Stick HD — live catalog fetch, pairing that persists across restarts/reboots/upgrades, Install via PC (build log streams back to the TV) |
 | Apps | 1 (`app.tizentube.vega`) |
 
 ## Not affiliated with Amazon or Google

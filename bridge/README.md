@@ -28,6 +28,12 @@ fyaisa connect --lan          # from the repo root
 node bridge/bridge.js --lan --hub-dir ~/FYAISA
 ```
 
+When the TV app requests a pairing code, approve it on the PC with:
+
+```bash
+fyaisa approve <6-digit-code>
+```
+
 Options:
 
 | Flag | Meaning |

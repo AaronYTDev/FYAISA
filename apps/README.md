@@ -83,3 +83,9 @@ install API is exposed to apps. So FYAISA is split:
   and can *request* installs through `fyaisa connect`.
 
 That split is a platform constraint, not a design choice.
+
+## See also
+
+[`docs/HOMEBREW.md`](../docs/HOMEBREW.md) — Vega OS platform notes for app
+developers: the sandbox layout (`/data`, `/tmp`, `/pkg`), `KeplerFileSystem`
+usage, TV focus/`BackHandler`, and other gotchas verified on device.
