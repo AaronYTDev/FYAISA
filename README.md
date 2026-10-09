@@ -1,6 +1,11 @@
 # FYAISA
 
-> **Fuck You Amazon, I'm Sideloading Anyways**
+## Fuck You Amazon, I'm Sideloading Anyways
+
+A hub for Vega OS Homebrew, with a CLI for installing.
+Designed by **aaronYTDev**.
+
+---
 
 A community hub for homebrew on Amazon's **Vega OS** Fire TV devices — the
 sticks that can no longer sideload Android APKs (Fire TV Stick 4K Select, Fire
