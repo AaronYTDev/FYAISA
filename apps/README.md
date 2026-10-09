@@ -1,7 +1,6 @@
-# FYAISA's app library.
+# Credits for various apps below.
 
 
-# Credits
 ## TizenTube Vega
-### aaronYTDev - Porting TizenTube to Vega OS
-### ReisXD - Original TizenTube
+#### aaronYTDev - Porting TizenTube to Vega OS
+#### ReisXD - Original TizenTube
