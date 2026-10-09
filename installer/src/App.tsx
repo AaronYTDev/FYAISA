@@ -167,6 +167,14 @@ const describePc = async (fy: Fyaisa): Promise<string> => {
   }
 };
 
+/**
+ * Wrap a base style so a Pressable renders the TV focus ring (styles.focused)
+ * when D-pad focused. Every focusable in the app goes through this — an
+ * unfocused-vs-focused difference you can actually see from the couch.
+ */
+const focusable = (base: any) => ({focused}: {focused: boolean}) =>
+  [base, focused && styles.focused];
+
 export const App = () => {
   usePreventHideSplashScreen();
   const hideSplashScreenCallback = useHideSplashScreenCallback();
@@ -439,7 +447,7 @@ export const App = () => {
               {HOST_KEYS.map((k, i) => (
                 <Pressable
                   key={i}
-                  style={({focused}) => [styles.key, focused && styles.keyFocused]}
+                  style={({focused}) => [styles.key, focused && styles.keyFocused, focused && styles.focused]}
                   onPress={() => {
                     if (k === '⌫') {
                       setPair(p => ({...p, host: (p.host || '').slice(0, -1)}));
@@ -462,7 +470,7 @@ export const App = () => {
             {pair.code ? <Text style={styles.code}>Code: {pair.code}</Text> : null}
             <Pressable
               hasTVPreferredFocus
-              style={styles.installBtn}
+              style={focusable(styles.installBtn)}
               onPress={startPairing}>
               <Text style={styles.backText}>
                 {pair.status === 'paired' ? 'Re-pair' : 'Get pairing code'}
@@ -471,7 +479,7 @@ export const App = () => {
 
             {pair.status === 'paired' ? (
               <Pressable
-                style={styles.forgetBtn}
+                style={focusable(styles.forgetBtn)}
                 onPress={() => {
                   clearPair();
                   setPcInfo(null);
@@ -483,7 +491,7 @@ export const App = () => {
             ) : null}
           </View>
 
-          <Pressable hasTVPreferredFocus style={styles.backBtn} onPress={() => setSelectedId(null)}>
+          <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
             <Text style={styles.backText}>Back</Text>
           </Pressable>
         </ScrollView>
@@ -551,7 +559,7 @@ export const App = () => {
                 </Text>
                 <Pressable
                   hasTVPreferredFocus
-                  style={styles.installBtn}
+                  style={focusable(styles.installBtn)}
                   onPress={() => requestInstall(selected.id)}>
                   <Text style={styles.backText}>Install via PC ({pair.host})</Text>
                 </Pressable>
@@ -576,7 +584,7 @@ export const App = () => {
             <Text style={styles.howtoBody}>Hub: {HUB_URL}</Text>
           </View>
 
-          <Pressable hasTVPreferredFocus style={styles.backBtn} onPress={() => setSelectedId(null)}>
+          <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
             <Text style={styles.backText}>Back to catalog</Text>
           </Pressable>
         </ScrollView>
@@ -595,7 +603,7 @@ export const App = () => {
       <View style={styles.connectBar}>
         <Pressable
           hasTVPreferredFocus
-          style={styles.connectBtn}
+          style={focusable(styles.connectBtn)}
           onPress={() => setSelectedId('__connect__')}>
           <Text style={styles.connectText}>
             {pair.status === 'paired'
@@ -627,7 +635,7 @@ export const App = () => {
               key={a.id}
               hasTVPreferredFocus={i === 0}
               focusable
-              style={({focused}) => [styles.row, focused && styles.rowFocused]}
+              style={({focused}) => [styles.row, focused && styles.rowFocused, focused && styles.focused]}
               onPress={() => setSelectedId(a.id)}>
               <View style={styles.rowMain}>
                 <Text style={styles.rowTitle}>{a.name}</Text>
@@ -667,12 +675,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#16161d',
     borderRadius: 10,
-    borderWidth: 2,
+    borderWidth: 4,
     borderColor: 'transparent',
     padding: 18,
     marginBottom: 12,
   },
-  rowFocused: {borderColor: '#e50914', backgroundColor: '#1e1e28'},
+  rowFocused: {backgroundColor: '#1e1e28'},
   rowMain: {flex: 1, paddingRight: 16},
   rowTitle: {color: '#fff', fontSize: 22, fontWeight: '600'},
   rowId: {color: '#6f6f80', fontSize: 13, marginTop: 2},
@@ -718,13 +726,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 13,
     borderRadius: 6,
+    borderWidth: 4,
+    borderColor: 'transparent',
   },
   backText: {color: '#fff', fontSize: 18},
   connectBar: {paddingHorizontal: 40, paddingBottom: 4},
   connectBtn: {
     backgroundColor: '#1c2733',
     borderRadius: 8,
-    borderWidth: 2,
+    borderWidth: 4,
     borderColor: '#2d4a63',
     paddingHorizontal: 18,
     paddingVertical: 12,
@@ -746,6 +756,8 @@ const styles = StyleSheet.create({
     margin: 4,
     borderRadius: 8,
     backgroundColor: '#23232d',
+    borderWidth: 4,
+    borderColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -758,6 +770,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 13,
     borderRadius: 6,
+    borderWidth: 4,
+    borderColor: 'transparent',
   },
   forgetBtn: {
     marginTop: 12,
@@ -766,8 +780,24 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 6,
+    borderWidth: 4,
+    borderColor: 'transparent',
   },
   forgetText: {color: '#e57373', fontSize: 16},
+  /**
+   * The TV focus ring. Without it the selected control is nearly invisible on
+   * this dark UI — every focusable appends this when focused, giving a thick
+   * amber border plus a glow. Bases above carry a transparent 4px border so
+   * focusing never shifts layout.
+   */
+  focused: {
+    borderColor: '#ffb02e',
+    shadowColor: '#ffb02e',
+    shadowOpacity: 0.85,
+    shadowRadius: 10,
+    shadowOffset: {width: 0, height: 0},
+    elevation: 10,
+  },
   job: {marginTop: 14},
   jobStatus: {color: '#7ee787', fontSize: 15, marginBottom: 6},
   jobLine: {color: '#8b8b99', fontSize: 12, fontFamily: 'monospace'},
