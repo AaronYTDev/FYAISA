@@ -1,5 +1,5 @@
 # FYAISA
-## (Pronounced Fie-eye-sha)
+## (Pronounced Fie-eye-sha, and stands for "Fuck You Amazon, I'm Sideloading Anyways")
 The one-stop homebrew shop for Vega OS devices.
 
 With a CLI for installing, and an on-device app.
