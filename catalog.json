@@ -94,9 +94,9 @@
     },
     {
       "id": "app.snake.main",
-      "name": "Snake",
-      "summary": "The classic snake game for your TV remote. Works offline, no account.",
-      "description": "The snake moves on a timer and is steered with the D-pad through Amazon's raw TV event hook. Walls kill, each snack grows the snake and speeds things up; OK starts, pauses and restarts, Back quits. Everything runs on the device: no network access, no storage, nothing.",
+      "name": "Google Snake",
+      "summary": "Google's snake arcade game in a TV app. Needs internet, no account.",
+      "description": "Google's snake_arcade doodle game from google.com in a Vega WebView: Google's board, art, speeds and trophies. The remote's arrows and OK go straight to the page, Back quits, Home exits. The game streams from Google, so the stick needs internet; no sign-in.",
       "path": "apps/snake",
       "license": "GPL-3.0-only",
       "author": "AaronYTDev",
@@ -110,14 +110,13 @@
       ],
       "tags": [
         "game",
-        "snake",
-        "offline"
+        "snake"
       ],
       "containsAds": false,
-      "requiresNetwork": false,
+      "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "updated": "2026-10-10",
       "install": {
         "kind": "vpkg-release",
@@ -154,7 +153,7 @@
       "containsAds": false,
       "requiresNetwork": false,
       "drm": false,
-      "status": "beta",
+      "status": "stable",
       "version": "1.0.0",
       "updated": "2026-10-10",
       "install": {

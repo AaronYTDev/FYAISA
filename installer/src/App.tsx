@@ -145,10 +145,10 @@ const FALLBACK_CATALOG: Catalog = {
     },
     {
       id: 'app.snake.main',
-      name: 'Snake',
-      summary: 'The classic snake game for your TV remote. Works offline, no account.',
+      name: 'Google Snake',
+      summary: "Google's snake arcade game in a TV app. Needs internet, no account.",
       license: 'GPL-3.0-only',
-      tags: ['game', 'snake', 'offline'],
+      tags: ['game', 'snake'],
       status: 'stable',
     },
     {
@@ -158,7 +158,7 @@ const FALLBACK_CATALOG: Catalog = {
         "id Software's DOOM Episode One, compiled to WebAssembly, running fully offline on your Fire TV.",
       license: 'GPL-3.0-only',
       tags: ['game', 'doom', 'wasm', 'offline'],
-      status: 'beta',
+      status: 'stable',
     },
   ],
 };

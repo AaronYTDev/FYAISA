@@ -285,8 +285,9 @@ The full contract (naming, licensing, catalog fields) is in
     `@amazon-devices/react-native-kepler` (Amazon's own addition; it is not in
     npm `react-native`). The callback gets `eventType` values like `'up'`,
     `'down'`, `'left'`, `'right'` and `'select'`. A remote can fire the same
-    key twice (keydown + keyup), so make repeats harmless — see the direction
-    queue and the select debounce in `apps/snake/src/App.tsx`.
+    key twice (keydown + keyup), so make repeats harmless: filter on
+    `eventKeyAction` and single-flight anything the page might also see, as
+    `apps/doom/src/App.tsx` does.
 11. Vega WebView apps: `source` only accepts `uri` (the `html` object from
     react-native-webview is not in Amazon's supported API), so local pages
     live in an `assets/` folder at the project root and load as
@@ -295,8 +296,13 @@ The full contract (naming, licensing, catalog fields) is in
     big scripts in 16 KB order-independent chunks that the page reassembles,
     as VegaTube does. With `allowSystemKeyEvents` on, every key reaches the
     page but Back reaches nobody; off, arrows and Enter still reach the page
-    and Back arrives at `BackHandler`. `apps/doom` uses all three facts:
-    asset page, chunked payload, Back forwarded into the page as the Use key.
+    and Back arrives at `BackHandler`. System buttons (Menu, Play/Pause)
+    reach neither side when it is off; forward them from `useTVEventHandler`,
+    whose `menu` and `playpause` events arrive through the UserInputManager
+    whatever the WebView is doing (confirmed on the stick, full list in
+    `Libraries/TV/TVTypes.d.ts`). `apps/doom` uses all of it: asset page,
+    chunked payload, Back forwarded as the Use key, Menu forwarded from the
+    TV hook as Escape.
 
 ## Troubleshooting
 

@@ -1,6 +1,6 @@
 {
   "name": "@fyaisa/snake",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "files": [
     "dist"
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@amazon-devices/react-native-kepler": "^4.0.0",
+    "@amazon-devices/webview": "^4.0.0",
     "react": "19.2.0",
     "react-native": "0.83.0"
   },
@@ -37,7 +38,7 @@
       "tv"
     ]
   },
-  "description": "Snake — the classic game for Vega OS Fire TV devices, played with the remote. Fully offline.",
+  "description": "Google Snake - Google's snake arcade game in a Vega WebView for Fire TV. Streams from google.com.",
   "author": "AaronYTDev",
   "license": "GPL-3.0-only",
   "repository": {
