@@ -131,6 +131,14 @@ export class Fyaisa {
     });
   }
 
+  /**
+   * Remove an installed app from the device. Hub and host tools only: the
+   * bridge runs `vega device uninstall-app` and returns {ok, exitCode, log}.
+   */
+  uninstall(appId: string): Promise<{ok: boolean; exitCode: number | null; log: string[]}> {
+    return this.req('/uninstall', {method: 'POST', body: JSON.stringify({appId})});
+  }
+
   job(id: string): Promise<any> {
     return this.req(`/job?id=${encodeURIComponent(id)}`);
   }

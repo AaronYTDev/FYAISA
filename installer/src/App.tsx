@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
+  Image,
   ScrollView,
   StyleSheet,
   Text,
@@ -25,6 +26,18 @@ import {
 
 const CATALOG_URL = 'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json';
 const HUB_URL = 'https://github.com/AaronYTDev/FYAISA';
+
+/**
+ * Row icons: the same artwork the launcher tiles use, bundled with the hub
+ * so the list shows them with no network. Catalog ids without an entry here
+ * render their row the old way, without an icon.
+ */
+const APP_ICONS: Record<string, any> = {
+  'app.snake.main': require('../assets/image/snake.png'),
+  'app.doom.main': require('../assets/image/doom.png'),
+  'app.vegatube.main': require('../assets/image/vegatube.png'),
+  'app.fyaisa.files.main': require('../assets/image/fileexplorer.png'),
+};
 
 type HubApp = {
   id: string;
@@ -229,8 +242,39 @@ export const App = () => {
   // ElevSH access screen: apps that asked for access + their decisions.
   const [access, setAccess] = useState<{appId: string; status: string}[] | null>(null);
   const [pairReqs, setPairReqs] = useState<{code: string; appId: string; expiresIn: number}[] | null>(null);
+  // What is installed on the stick right now, learned over ElevSH (the bridge
+  // runs `vega device installed-apps` on the PC). Empty until the first poll,
+  // so everything looks "not installed" for a moment on a cold start.
+  const [installed, setInstalled] = useState<Set<string>>(new Set());
+  /** Update-all progress; null while no update-all run is going on. */
+  const [updateAll, setUpdateAll] = useState<{done: number; total: number; current: string} | null>(null);
+  /** Detail-view Remove button: the first press arms it, the second removes. */
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
+
+  const apps = useMemo(() => catalog?.apps ?? [], [catalog]);
+  const selected = useMemo(
+    () => apps.find(a => a.id === selectedId) ?? null,
+    [apps, selectedId],
+  );
+
+  // What the Apps menu lists: everything when the search box is empty,
+  // otherwise a case-insensitive match over the fields you'd actually type.
+  const filteredApps = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return apps;
+    }
+    return apps.filter(
+      a =>
+        a.name.toLowerCase().includes(q) ||
+        a.id.toLowerCase().includes(q) ||
+        (a.summary ?? '').toLowerCase().includes(q) ||
+        (a.description ?? '').toLowerCase().includes(q) ||
+        (a.tags ?? []).some(t => t.toLowerCase().includes(q)),
+    );
+  }, [apps, query]);
 
   // Restore a previous pairing on launch; React state alone is lost on every
   // app restart.
@@ -338,6 +382,46 @@ export const App = () => {
     };
   }, [pair.status, bridgeFetch]);
 
+  /**
+   * Ask the PC what is installed, through the bridge's allowlisted /vega
+   * (`vega device installed-apps`). Polled on a slow timer and refreshed
+   * after every install/remove job; the buttons and badges read this.
+   */
+  const refreshInstalled = useCallback(async () => {
+    if (pair.status !== 'paired') {
+      return;
+    }
+    try {
+      const r = await bridgeFetch('/vega', {
+        method: 'POST',
+        body: JSON.stringify({args: ['device', 'installed-apps'], timeoutMs: 30000}),
+      });
+      const out = String(r.stdout || '').trim();
+      if (!r.ok || !out) {
+        return; // vda link down; keep the last snapshot
+      }
+      setInstalled(
+        new Set(
+          out
+            .split('\n')
+            .map((l: string) => l.trim())
+            .filter((l: string) => l.length > 0),
+        ),
+      );
+    } catch {
+      // Bridge offline; the status strip says so, buttons keep the last state.
+    }
+  }, [pair.status, bridgeFetch]);
+
+  useEffect(() => {
+    if (pair.status !== 'paired') {
+      return;
+    }
+    refreshInstalled();
+    const iv = setInterval(refreshInstalled, 30000);
+    return () => clearInterval(iv);
+  }, [pair.status, refreshInstalled]);
+
   /** Ask the bridge for a code, then poll until the user approves it on the PC. */
   const startPairing = useCallback(async () => {
     if (!base) {
@@ -424,6 +508,9 @@ export const App = () => {
             setPair(p => ({...p, job}));
             if (['done', 'error'].includes(job.status)) {
               clearInterval(iv);
+              if (job.status === 'done') {
+                refreshInstalled();
+              }
             }
           } catch (e: any) {
             clearInterval(iv);
@@ -434,8 +521,91 @@ export const App = () => {
         setPair(p => ({...p, status: 'error', message: e.message}));
       }
     },
-    [bridgeFetch],
+    [bridgeFetch, refreshInstalled],
   );
+
+  /** Remove an app from the device over ElevSH, then refresh installed state. */
+  const requestUninstall = useCallback(
+    async (appId: string) => {
+      try {
+        const r = await bridgeFetch('/uninstall', {
+          method: 'POST',
+          body: JSON.stringify({appId}),
+        });
+        if (!r.ok) {
+          throw new Error((r.log || []).slice(-1)[0] || `remove failed for ${appId}`);
+        }
+        console.info(`[FYAISA] removed ${appId}`);
+        setPair(p => ({...p, message: `Removed ${appId}`}));
+        await refreshInstalled();
+      } catch (e: any) {
+        setPair(p => ({...p, status: 'error', message: e.message}));
+      }
+    },
+    [bridgeFetch, refreshInstalled],
+  );
+
+  /**
+   * Rebuild and reinstall every catalog app, one bridge job at a time. The
+   * bridge refuses concurrent jobs (429), so each app waits out its full job
+   * before the next one is queued.
+   */
+  const runUpdateAll = useCallback(async () => {
+    if (pair.status !== 'paired') {
+      setPair(p => ({
+        ...p,
+        status: 'error',
+        message: 'Not paired with ElevSH — set it up in FYAISA → ElevSH first',
+      }));
+      return;
+    }
+    if (updateAll || !apps.length) {
+      return;
+    }
+    setUpdateAll({done: 0, total: apps.length, current: ''});
+    try {
+      for (let i = 0; i < apps.length; i++) {
+        const a = apps[i];
+        setUpdateAll({done: i, total: apps.length, current: a.name});
+        const {jobId} = await bridgeFetch('/install', {
+          method: 'POST',
+          body: JSON.stringify({appId: a.id}),
+        });
+        setPair(p => ({
+          ...p,
+          job: {id: jobId, status: 'queued', log: []},
+          message: `Updating ${a.name}…`,
+        }));
+        for (;;) {
+          await new Promise<void>(r => setTimeout(r, PAIR_POLL_MS));
+          const job = await bridgeFetch(`/job?id=${jobId}`);
+          setPair(p => ({...p, job}));
+          if (job.status === 'done') {
+            break;
+          }
+          if (job.status === 'error') {
+            setPair(p => ({
+              ...p,
+              status: 'error',
+              message: `Update failed for ${a.name} (continuing with the rest)`,
+            }));
+            break;
+          }
+        }
+      }
+      setUpdateAll({done: apps.length, total: apps.length, current: ''});
+    } catch (e: any) {
+      setPair(p => ({...p, status: 'error', message: e.message}));
+    } finally {
+      setTimeout(() => setUpdateAll(null), 4000);
+      refreshInstalled();
+    }
+  }, [pair.status, apps, bridgeFetch, refreshInstalled, updateAll]);
+
+  // Switching detail views re-arms the Remove button.
+  useEffect(() => {
+    setConfirmRemove(false);
+  }, [selectedId]);
 
   /** Allow / deny / revoke an app's ElevSH access from the TV. */
   const decideAccess = useCallback(
@@ -507,29 +677,6 @@ export const App = () => {
   useEffect(() => {
     loadCatalog();
   }, [loadCatalog]);
-
-  const apps = useMemo(() => catalog?.apps ?? [], [catalog]);
-  const selected = useMemo(
-    () => apps.find(a => a.id === selectedId) ?? null,
-    [apps, selectedId],
-  );
-
-  // What the Apps menu lists: everything when the search box is empty,
-  // otherwise a case-insensitive match over the fields you'd actually type.
-  const filteredApps = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) {
-      return apps;
-    }
-    return apps.filter(
-      a =>
-        a.name.toLowerCase().includes(q) ||
-        a.id.toLowerCase().includes(q) ||
-        (a.summary ?? '').toLowerCase().includes(q) ||
-        (a.description ?? '').toLowerCase().includes(q) ||
-        (a.tags ?? []).some(t => t.toLowerCase().includes(q)),
-    );
-  }, [apps, query]);
 
   // Remote navigation is handled natively: Pressable rows take D-pad focus
   // (the first row seeded with hasTVPreferredFocus), and Back is caught through
@@ -778,6 +925,7 @@ export const App = () => {
             {selected.status ? (
               <Badge label={selected.status} color={statusColor(selected.status)} />
             ) : null}
+            {installed.has(selected.id) ? <Badge label="installed" color="#4caf50" /> : null}
             {selected.license ? <Badge label={selected.license} color="#64b5f6" /> : null}
             {selected.containsAds === false ? <Badge label="no ads" color="#4caf50" /> : null}
             {selected.minOsVersion ? (
@@ -822,7 +970,9 @@ export const App = () => {
                   hasTVPreferredFocus
                   style={focusable(styles.installBtn)}
                   onPress={() => requestInstall(selected.id)}>
-                  <Text style={styles.backText}>Install via ElevSH ({pair.host})</Text>
+                  <Text style={styles.backText}>
+                    {installed.has(selected.id) ? 'Update' : 'Install'} via ElevSH ({pair.host})
+                  </Text>
                 </Pressable>
                 {pair.job ? (
                   <View style={styles.job}>
@@ -836,11 +986,34 @@ export const App = () => {
                     ))}
                   </View>
                 ) : null}
+                {installed.has(selected.id) ? (
+                  <Pressable
+                    style={focusable(styles.removeBtn)}
+                    onPress={() => {
+                      if (!confirmRemove) {
+                        setConfirmRemove(true);
+                        return;
+                      }
+                      setConfirmRemove(false);
+                      requestUninstall(selected.id);
+                    }}>
+                    <Text style={styles.removeText}>
+                      {confirmRemove
+                        ? `Press again to remove ${selected.name}`
+                        : 'Remove from device'}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </>
             ) : (
-              <Text style={styles.howtoBody}>
-                Set up ElevSH (FYAISA → ElevSH) to install from the couch.
-              </Text>
+              <>
+                <Text style={styles.howtoBody}>
+                  Set up ElevSH (FYAISA → ElevSH) to install from the couch.
+                </Text>
+                {installed.has(selected.id) ? (
+                  <Text style={styles.code}>fyaisa uninstall {selected.id}</Text>
+                ) : null}
+              </>
             )}
             <Text style={styles.howtoBody}>Hub: {HUB_URL}</Text>
           </View>
@@ -923,6 +1096,16 @@ export const App = () => {
             {query ? `"${query}"` : 'Search apps'}
           </Text>
         </Pressable>
+        {/* Update all: rebuilds and reinstalls every catalog app through the
+            same bridge jobs the per-row buttons queue, one at a time. */}
+        <Pressable
+          focusable
+          style={({focused}) => [styles.updateAllBtn, focused && styles.focused]}
+          onPress={runUpdateAll}>
+          <Text style={styles.refreshText}>
+            {updateAll ? `Updating ${updateAll.done}/${updateAll.total}…` : 'Update all'}
+          </Text>
+        </Pressable>
         {/* Refresh: re-runs the exact fetch the app does on launch (the live
             catalog from the repo, same source `fyaisa` prints on the PC),
             falling back to the built-in list if GitHub is unreachable. */}
@@ -933,6 +1116,23 @@ export const App = () => {
           <Text style={styles.refreshText}>{loading ? 'Refreshing…' : 'Refresh'}</Text>
         </Pressable>
       </View>
+
+      {/* Job/progress strip: what an install, update-all or remove is doing
+          right now, plus bridge errors that have nowhere else to surface. */}
+      {updateAll ? (
+        <Text style={styles.jobStrip}>
+          {updateAll.current
+            ? `Updating ${updateAll.current} (${updateAll.done + 1} of ${updateAll.total})`
+            : `Update all: ${updateAll.done} of ${updateAll.total} done`}
+        </Text>
+      ) : pair.job &&
+        ['queued', 'building', 'installing'].includes(pair.job.status) ? (
+        <Text style={styles.jobStrip}>
+          {pair.job.status}: {pair.job.log.slice(-1)[0] ?? ''}
+        </Text>
+      ) : pair.status === 'error' && pair.message ? (
+        <Text style={styles.jobStripWarn}>{pair.message}</Text>
+      ) : null}
 
       {catalog == null ? (
         <View style={styles.center}>
@@ -963,23 +1163,45 @@ export const App = () => {
           ) : null}
 
           {filteredApps.map((a, i) => (
-            <Pressable
-              key={a.id}
-              hasTVPreferredFocus={i === 0}
-              focusable
-              style={({focused}) => [styles.row, focused && styles.rowFocused, focused && styles.focused]}
-              onPress={() => setSelectedId(a.id)}>
-              <View style={styles.rowMain}>
-                <Text style={styles.rowTitle}>{a.name}</Text>
-                <Text style={styles.rowId}>{a.id}</Text>
-                {a.summary ? (
-                  <Text style={styles.rowSummary} numberOfLines={2}>
-                    {a.summary}
-                  </Text>
+            <View key={a.id} style={styles.rowCard}>
+              <Pressable
+                hasTVPreferredFocus={i === 0}
+                focusable
+                style={({focused}) => [styles.rowBody, focused && styles.rowFocused, focused && styles.focused]}
+                onPress={() => setSelectedId(a.id)}>
+                {APP_ICONS[a.id] ? (
+                  <Image style={styles.rowIcon} source={APP_ICONS[a.id]} />
                 ) : null}
-              </View>
-              <View style={[styles.dot, {backgroundColor: statusColor(a.status)}]} />
-            </Pressable>
+                <View style={styles.rowMain}>
+                  <Text style={styles.rowTitle}>{a.name}</Text>
+                  <Text style={styles.rowId}>{a.id}</Text>
+                  {a.summary ? (
+                    <Text style={styles.rowSummary} numberOfLines={2}>
+                      {a.summary}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={[styles.dot, {backgroundColor: statusColor(a.status)}]} />
+              </Pressable>
+              {/* Sibling of the row body, not a child: a nested focusable
+                  inside the row Pressable confuses D-pad focus. */}
+              <Pressable
+                focusable
+                style={({focused}) => [styles.rowActionBtn, focused && styles.focused]}
+                onPress={() => {
+                  if (pair.status !== 'paired') {
+                    setPair(p => ({
+                      ...p,
+                      status: 'error',
+                      message: 'Not paired with ElevSH — set it up in FYAISA → ElevSH first',
+                    }));
+                    return;
+                  }
+                  requestInstall(a.id);
+                }}>
+                <Text style={styles.rowActionText}>{installed.has(a.id) ? 'Update' : 'Install'}</Text>
+              </Pressable>
+            </View>
           ))}
         </ScrollView>
       )}
@@ -1013,10 +1235,32 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   rowFocused: {backgroundColor: '#1e1e28'},
+  rowCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#16161d',
+    borderRadius: 10,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    padding: 18,
+    marginBottom: 12,
+  },
+  rowBody: {flex: 1, flexDirection: 'row', alignItems: 'center'},
+  rowIcon: {width: 76, height: 76, borderRadius: 14, marginRight: 18},
   rowMain: {flex: 1, paddingRight: 16},
   rowTitle: {color: '#fff', fontSize: 22, fontWeight: '600'},
   rowId: {color: '#6f6f80', fontSize: 13, marginTop: 2},
   rowSummary: {color: '#b9b9c6', fontSize: 15, marginTop: 6},
+  rowActionBtn: {
+    backgroundColor: '#165a8c',
+    borderRadius: 6,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    paddingHorizontal: 20,
+    paddingVertical: 11,
+    marginLeft: 8,
+  },
+  rowActionText: {color: '#fff', fontSize: 16, fontWeight: '600'},
   dot: {width: 12, height: 12, borderRadius: 6},
   chevron: {color: '#6f6f80', fontSize: 30, fontWeight: '600'},
   detailWrap: {flex: 1, backgroundColor: '#0b0b0f'},
@@ -1107,6 +1351,17 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   forgetText: {color: '#e57373', fontSize: 16},
+  removeBtn: {
+    marginTop: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: '#3a2020',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 6,
+    borderWidth: 4,
+    borderColor: 'transparent',
+  },
+  removeText: {color: '#e57373', fontSize: 16},
   accessRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1170,6 +1425,18 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   refreshText: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  updateAllBtn: {
+    backgroundColor: '#165a8c',
+    borderRadius: 10,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    marginRight: 12,
+    alignSelf: 'flex-start',
+  },
+  jobStrip: {color: '#8fb8d8', fontSize: 15, paddingHorizontal: 40, paddingBottom: 12},
+  jobStripWarn: {color: '#ffb300', fontSize: 15, paddingHorizontal: 40, paddingBottom: 12},
   searchQuery: {color: '#fff', fontSize: 26, fontWeight: '600', marginTop: 8},
   searchCount: {color: '#77778a', fontSize: 15, marginTop: 4},
   ctrlKey: {

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#140404"/>
+  <path d="M0 512 L0 420 L60 358 L110 430 L170 338 L230 430 L290 348 L350 436 L410 354 L470 430 L512 378 L512 512 Z" fill="#7a1608"/>
+  <path d="M0 512 L0 458 L70 408 L140 470 L210 402 L280 470 L350 408 L420 468 L480 414 L512 444 L512 512 Z" fill="#c22a0a"/>
+  <text x="256" y="304" text-anchor="middle" font-family="Liberation Sans, Adwaita Sans, sans-serif" font-weight="bold" font-size="132" fill="#f4f4f4" stroke="#ff3d17" stroke-width="12" paint-order="stroke">DOOM</text>
+</svg>

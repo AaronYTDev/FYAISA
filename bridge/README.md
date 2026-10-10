@@ -69,6 +69,7 @@ Options:
 | `POST` | `/install` | token | `{appId}` → `{jobId}`, reconnects vda to the requesting TV, then builds + installs. Add `patch: true` for a patch install: the app is rebuilt under its catalog `patch.for` identity (original's app id + display name, version forced to `99.99.99`), the original app is uninstalled first; see "Patch installs" in [`docs/HOMEBREW.md`](../docs/HOMEBREW.md) |
 | `GET` | `/job?id=` | token | job status + build log |
 | `GET` | `/jobs` | token | all jobs |
+| `POST` | `/uninstall` | token (hub/host tools) | `{appId}` → remove the app from the device (`vega device uninstall-app`), `{ok, exitCode, log}` |
 | `GET` | `/pair/pending` | token (FYAISA) | app pairing requests waiting for a decision |
 | `GET` | `/access` | token (FYAISA) | the allow/deny list: `[{appId, status}]` |
 | `POST` | `/access` | token (FYAISA) | `{appId, decision: allow \| deny \| revoke}` |

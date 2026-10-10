@@ -28,7 +28,10 @@ FYAISA/
 │   └── README.md             # bridge API + security model
 ├── docs/
 │   └── HOMEBREW.md           # developer guide: Vega CLI, pairing, platform gotchas
-└── installer/                # the FYAISA app (on-device catalog browser)
+├── icons/                    # launcher icon art (SVG sources; each app ships its PNG)
+├── installer/                # the FYAISA app (on-device catalog browser)
+└── scripts/
+    └── install-hub.sh        # build + install the hub app itself
 ```
 
 ## Quick start
@@ -39,6 +42,7 @@ cd FYAISA
 ./fyaisa list                      # what's available
 ./fyaisa devices                   # Fire TVs visible to the Vega CLI
 ./fyaisa install app.vegatube.main
+./scripts/install-hub.sh           # build and install the hub app itself
 ```
 
 Prerequisites: the [Vega SDK](https://developer.amazon.com/docs/vega/latest/install-vega-sdk.html)

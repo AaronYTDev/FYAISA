@@ -4,6 +4,7 @@ schema-version = 1
 title = "ElevSH Files"
 version = "1.0.0"
 id = "app.fyaisa.files"
+icon = "@image/fileexplorer.png"
 
 # Vega OS 1.2 is the only version the current SDK mints. For firmware still on
 # 1.1 use SDK 0.23.9221 and set min/target to "1.1" with IVega_1_1.

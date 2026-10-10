@@ -76,6 +76,10 @@ npm run build:release          # produces a .vpkg under build/
 vega device install-app --dir . -b Release
 ```
 
+The hub app itself builds the same way; `./scripts/install-hub.sh` does the
+clean build and the install in one step (pass `aarch64` as the first
+argument for other sticks).
+
 Managing what's on the device:
 
 ```bash
@@ -87,6 +91,32 @@ vega device run-cmd --command 'ls /data'  # shell on the device (as app_user)
 ```
 
 Uninstall: `fyaisa uninstall <app-id>`.
+
+### App icon
+
+The launcher tile is declared in the manifest and the art ships inside the
+package:
+
+```toml
+[package]
+# ...
+icon = "@image/app.png"
+```
+
+The name must match `^@image/([^\s/]+)$` and the file must exist at
+`assets/image/<name>` in the project (the packaging tool checks and prints
+`Icon file not found: manifest declares icon '@image/app.png'` when it is
+missing). Without an `icon` field the system default tile is used and the
+pack warns `Icon is not defined in the manifest`. A square 512x512 PNG
+works; the launcher crops to a rounded tile, so keep key art away from the
+corners. The hub's app list shows the same artwork offline: copies live
+under `installer/assets/image/` with the catalog ids mapped in
+`APP_ICONS` in `installer/src/App.tsx`.
+
+Incremental builds do not reliably re-stage the manifest or `assets/`:
+after changing either, delete `build/` and `buildinfo.json` before
+rebuilding, otherwise the pack silently reuses the previous staging and the
+vpkg ships without the icon (no warning, exit 0).
 
 ## 5. Install from the couch: pairing the TV app with your PC (ElevSH)
 

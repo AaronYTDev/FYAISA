@@ -631,6 +631,33 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, job);
   }
 
+  // Remove an installed app from the device. Hub and host tools only, like
+  // /shutdown: a paired third-party app must not be able to wipe apps. The
+  // one-job-at-a-time guard matches /install so two vega commands never
+  // interleave against the same stick.
+  if (path_ === '/uninstall' && req.method === 'POST') {
+    const h = req.headers['x-fyaisa-app'];
+    if (typeof h === 'string' && h !== OWNER_APP) {
+      return json(res, 403, { error: 'only the hub may uninstall apps', code: 'access_denied' });
+    }
+    const body = await readBody(req);
+    const appId = String(body.appId || '');
+    if (!APP_ID_RE.test(appId)) return json(res, 400, { error: 'bad appId', code: 'bad_app_id' });
+    if ([...jobs.values()].some((j) => j.status === 'building' || j.status === 'installing')) {
+      return json(res, 429, { error: 'a job is already running' });
+    }
+    const ip = clientIpOf(req);
+    if (ip) {
+      await run('vega', ['exec', 'vda', 'connect', `${ip}:5555`], HOST_DIR, () => {});
+    }
+    const out = [];
+    const rc = await run('vega', ['device', 'uninstall-app', '--appName', appId], HOST_DIR, (l) =>
+      out.push(l),
+    );
+    log(`uninstall ${appId} -> ${rc === 0 ? 'ok' : `exit ${rc}`}`);
+    return json(res, rc === 0 ? 200 : 500, { ok: rc === 0, exitCode: rc, log: out });
+  }
+
   if (path_ === '/jobs' && req.method === 'GET') {
     return json(res, 200, { jobs: [...jobs.values()] });
   }
