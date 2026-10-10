@@ -280,6 +280,13 @@ The full contract (naming, licensing, catalog fields) is in
 9. Right after a sideload the first launch can fail once on some OS
    versions. If an app comes up blank, terminate and launch it again (see the
    cold-start recovery comment in `apps/vegatube/src/App.tsx`).
+10. D-pad *focus* (Pressable) covers menus, but a game that moves on a timer
+    needs raw key events: import `useTVEventHandler` from
+    `@amazon-devices/react-native-kepler` (Amazon's own addition; it is not in
+    npm `react-native`). The callback gets `eventType` values like `'up'`,
+    `'down'`, `'left'`, `'right'` and `'select'`. A remote can fire the same
+    key twice (keydown + keyup), so make repeats harmless — see the direction
+    queue and the select debounce in `apps/snake/src/App.tsx`.
 
 ## Troubleshooting
 

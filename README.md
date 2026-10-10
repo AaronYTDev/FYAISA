@@ -20,6 +20,7 @@ FYAISA/
 ├── apps/
 │   ├── README.md             # the app format (contract for contributors)
 │   ├── fileexplorer/          # ElevSH Files, a D-pad file browser over ElevSH
+│   ├── snake/                 # Snake, a D-pad snake game that runs offline
 │   └── vegatube/              # reference app: VegaTube (ad-free YouTube)
 ├── bridge/
 │   ├── bridge.js             # ElevSH bridge: pairing + installs + access gate
@@ -160,8 +161,8 @@ Releases page; the catalog's `install` block describes how to get one.
 | `fyaisa` CLI | list / search / info / install / update / uninstall / devices / connect / approve |
 | `fyaisa connect` bridge (ElevSH) | pairing (PC or FYAISA approval), token auth, per-app allow/deny, installs, `POST /vega`, `fyaisa disconnect` |
 | Catalog | `catalog.json` schema v1, served from this repo |
-| FYAISA app | works on a Fire TV Stick HD: live catalog, persistent pairing, Install via ElevSH, ElevSH allow/deny screen |
-| Apps | 2: `app.vegatube.main` (VegaTube), `app.fyaisa.files.main` (ElevSH Files, the file explorer) |
+| FYAISA app | works on a Fire TV Stick HD: live catalog with search, persistent pairing, Install via ElevSH, ElevSH allow/deny screen |
+| Apps | 3: `app.vegatube.main` (VegaTube), `app.fyaisa.files.main` (ElevSH Files, the file explorer), `app.snake.main` (Snake, offline) |
 
 ## Not affiliated with Amazon or Google
 

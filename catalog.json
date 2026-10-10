@@ -91,6 +91,43 @@
         "Pairs with ElevSH like every FYAISA app; approve it in FYAISA \u2192 ElevSH or with `fyaisa approve <code>`.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
+    },
+    {
+      "id": "app.snake.main",
+      "name": "Snake",
+      "summary": "The classic snake game for your TV remote. Works offline, no account.",
+      "description": "The snake moves on a timer and is steered with the D-pad through Amazon's raw TV event hook. Walls kill, each snack grows the snake and speeds things up; OK starts, pauses and restarts, Back quits. Everything runs on the device: no network access, no storage, nothing.",
+      "path": "apps/snake",
+      "license": "GPL-3.0-only",
+      "author": "AaronYTDev",
+      "homepage": "https://github.com/AaronYTDev/FYAISA",
+      "minOsVersion": "1.2",
+      "targetOsVersion": "1.2",
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "game",
+        "snake",
+        "offline"
+      ],
+      "containsAds": false,
+      "requiresNetwork": false,
+      "drm": false,
+      "status": "stable",
+      "version": "1.0.0",
+      "updated": "2026-10-10",
+      "install": {
+        "kind": "vpkg-release",
+        "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/snake with the Vega SDK."
+      },
+      "notes": [
+        "No pairing needed — it never talks to your PC or the network.",
+        "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ]
     }
   ]
 }
