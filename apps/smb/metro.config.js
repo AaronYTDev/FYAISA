@@ -1,0 +1,1 @@
+const {getDefaultConfig, mergeConfig} = require('@react-native/metro-config');\n\nconst config = {\n  projectRoot: __dirname,\n  transformer: {\n    getTransformOptions: async () => ({\n      transform: {experimentalImportSupport: false, inlineRequires: true},\n    }),\n  },\n};\n\nmodule.exports = mergeConfig(getDefaultConfig(__dirname), config);

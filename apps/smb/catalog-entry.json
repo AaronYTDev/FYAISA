@@ -1,0 +1,38 @@
+{
+  "id": "app.smb.main",
+  "name": "Super Mario Bros",
+  "summary": "NES SMB emulator for Vega OS Fire TV Sticks (no ROM bundled). Downloads ROM from external source on first launch.",
+  "description": "Super Mario Bros NES emulator for Vega OS Fire TV Sticks. Runs in a WebView using jsnes. Downloads the Super Mario Bros ROM from an external source on first launch so no copyrighted ROM is bundled (legally clean). TV remote mapping: D-Pad, Menu=Start, Back=Select, Fast-forward=A, Play/Pause=B. No WebView browsing, d-pad navigable.",
+  "path": "apps/smb",
+  "license": "GPL-3.0-only",
+  "author": "FYAISA contributors",
+  "homepage": "https://github.com/AaronYTDev/FYAISA",
+  "minOsVersion": "1.2",
+  "targetOsVersion": "1.2",
+  "architectures": [
+    "armv7",
+    "aarch64",
+    "x86_64"
+  ],
+  "tags": [
+    "game",
+    "nes",
+    "smb",
+    "emulator"
+  ],
+  "containsAds": false,
+  "requiresNetwork": true,
+  "drm": false,
+  "status": "beta",
+  "version": "1.0.0",
+  "updated": "2026-10-10",
+  "install": {
+    "kind": "vpkg-release",
+    "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+    "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/smb with the Vega SDK."
+  },
+  "notes": [
+    "Super Mario Bros NES emulator (jsnes). Downloads the ROM from an external host on first launch (no ROM bundled).",
+    "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+  ]
+}

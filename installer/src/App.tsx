@@ -35,6 +35,7 @@ const HUB_URL = 'https://github.com/AaronYTDev/FYAISA';
 const APP_ICONS: Record<string, any> = {
   'app.snake.main': require('../assets/image/snake.png'),
   'app.doom.main': require('../assets/image/doom.png'),
+  'app.smb.main': require('../assets/image/smb.png'),
   'app.vegatube.main': require('../assets/image/vegatube.png'),
   'app.fyaisa.files.main': require('../assets/image/fileexplorer.png'),
   'app.cinevega.main': require('../assets/image/cinevega.png'),

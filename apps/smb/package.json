@@ -1,0 +1,54 @@
+{
+  "name": "@fyaisa/smb",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Super Mario Bros NES emulator for Vega OS Fire TV Sticks (FYAISA hub app).",
+  "author": "FYAISA contributors",
+  "license": "GPL-3.0-only",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "clean": "rm -rf node_modules buildinfo.json dist build",
+    "start": "react-native start",
+    "build:release": "react-native build-vega --build-type Release",
+    "build:debug": "react-native build-vega --build-type Debug",
+    "build:app": "npm run build:release",
+    "build": "npm run build:release",
+    "install:device": "bash scripts/install-device.sh",
+    "doctor": "vega project doctor"
+  },
+  "dependencies": {
+    "@amazon-devices/react-native-kepler": "^4.0.0",
+    "@amazon-devices/webview": "^4.0.0",
+    "react": "19.2.0",
+    "react-native": "0.83.0",
+    "@amazon-devices/kepler-file-system": "^0.0.7"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@amazon-devices/kepler-cli-platform": "^0",
+    "@react-native-community/cli": "20.0.0",
+    "@react-native/babel-preset": "0.83.0",
+    "@react-native/metro-config": "0.83.0",
+    "@types/react": "^19.2.0",
+    "typescript": "5.8.3"
+  },
+  "kepler": {
+    "projectType": "application",
+    "appName": "smb",
+    "targets": [
+      "tv"
+    ]
+  },
+  "overrides": {
+    "react": "19.2.0",
+    "react-native": "0.83.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AaronYTDev/FYAISA"
+  }
+}
