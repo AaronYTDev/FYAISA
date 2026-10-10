@@ -252,7 +252,7 @@ export const App = () => {
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
-  const apps = useMemo(() => catalog?.apps ?? [], [catalog]);
+  const apps = useMemo(() => (catalog?.apps ?? []).filter(a => a.id !== 'app.cinevega.main'), [catalog]);
   const selected = useMemo(
     () => apps.find(a => a.id === selectedId) ?? null,
     [apps, selectedId],

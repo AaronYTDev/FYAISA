@@ -99,6 +99,18 @@ function readCatalog() {
   }
 }
 
+// Fetch the catalog from GitHub (fallback when local is stale/missing)
+async function fetchRemoteCatalog() {
+  try {
+    const res = await fetch('https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    log('remote catalog fetch failed:', e.message);
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Install pipeline (delegates to the same steps as `fyaisa install`)
 // ---------------------------------------------------------------------------
@@ -131,6 +143,44 @@ function clientIpOf(req) {
   return raw;
 }
 
+// --- Remote app source -------------------------------------------------------
+// Downloads app source from GitHub so the bridge doesn't need a local clone.
+const REMOTE_REPO = 'https://github.com/AaronYTDev/FYAISA';
+const REMOTE_TARBALL = 'https://github.com/AaronYTDev/FYAISA/archive/refs/heads/main.tar.gz';
+const REMOTE_CACHE_DIR = path.join(os.homedir(), '.fyaisa', 'app-cache');
+
+async function fetchRemoteApp(relPath) {
+  const cacheDir = path.join(REMOTE_CACHE_DIR, relPath);
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fyaisa-remote-'));
+
+  try {
+    // Download tarball
+    const tarball = path.join(tmp, 'repo.tar.gz');
+    const res = await fetch(REMOTE_TARBALL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    fs.writeFileSync(tarball, buf);
+
+    // Extract just the app directory
+    const extractDir = path.join(tmp, 'extract');
+    fs.mkdirSync(extractDir, { recursive: true });
+    await run('tar', ['-xzf', tarball, '-C', extractDir, '--wildcards', `FYAISA-main/${relPath}/*`], tmp, () => {});
+
+    // Copy to cache
+    const srcDir = path.join(extractDir, 'FYAISA-main', relPath);
+    if (!fs.existsSync(srcDir)) {
+      throw new Error(`App directory not found in tarball: ${relPath}`);
+    }
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(cacheDir), { recursive: true });
+    fs.cpSync(srcDir, cacheDir, { recursive: true });
+
+    return cacheDir;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 async function installApp(appId, job, opts = {}) {
   const catalog = readCatalog();
   const app = (catalog.apps || []).find((a) => a.id === appId);
@@ -139,11 +189,19 @@ async function installApp(appId, job, opts = {}) {
     job.log.push(`Unknown app id: ${appId}`);
     return;
   }
-  const dir = path.join(HOST_DIR, app.path || '');
+
+  // Resolve app source: local if available, otherwise fetch from GitHub
+  let dir = path.join(HOST_DIR, app.path || '');
   if (!fs.existsSync(dir)) {
-    job.status = 'error';
-    job.log.push(`App source missing: ${dir}`);
-    return;
+    job.log.push(`App source not found locally, fetching from GitHub…`);
+    try {
+      dir = await fetchRemoteApp(app.path || '');
+      job.log.push(`Fetched ${app.path} from GitHub`);
+    } catch (e) {
+      job.status = 'error';
+      job.log.push(`Failed to fetch app source: ${e.message}`);
+      return;
+    }
   }
 
   // ---- reconnect vda ---------------------------------------------------------
@@ -588,6 +646,11 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (path_ === '/catalog' && req.method === 'GET') {
+    // Prefer the remote catalog so the hub always shows the latest apps.
+    const remote = await fetchRemoteCatalog();
+    if (remote && Array.isArray(remote.apps)) {
+      return json(res, 200, remote);
+    }
     return json(res, 200, readCatalog());
   }
 

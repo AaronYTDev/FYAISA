@@ -11,6 +11,7 @@
 #   fyaisa install <app-id>          build if needed, then install on the device
 #   fyaisa update <app-id>           rebuild a locally-edited app and reinstall
 #   fyaisa uninstall <app-id>        remove from the device
+#   fyaisa add-app <name>            scaffold a new app from a template
 #   fyaisa devices                   list Fire TVs visible to the Vega CLI
 #   fyaisa connect [--lan] [--port N] [--tunnel]
 #                                     start the ElevSH bridge: pair this PC with
@@ -21,9 +22,11 @@
 #
 # Options:
 #   --repo <url>     catalog repo (default: https://github.com/AaronYTDev/FYAISA)
-#   --dir <path>     local FYAISA checkout to build from (default: this script's repo)
+#   --dir <path>     local FYAISA checkout to build from (default: fetch from GitHub)
 #   --ip <host:port> target a specific device
 #   --debug          keep going and show more output
+#
+# Apps are fetched from GitHub by default. Use --dir to build from a local clone.
 #
 # WHY INSTALLING HAPPENS HERE: a Vega app cannot install other .vpkg packages.
 # Package management is a host-side operation (vega device install-app). So this
@@ -194,13 +197,78 @@ require_device() {
 
 # --- app source --------------------------------------------------------------
 # Apps live in apps/<dir>/ and are full Vega projects, exactly like VegaTube.
+# By default, fetch the app source from GitHub so you don't need a local clone.
+# Use --dir to build from a local checkout instead.
+APP_CACHE_DIR="$HOME/.fyaisa/app-cache"
+
+fetch_app_source() {
+  local rel="$1"
+  local cache_dir="$APP_CACHE_DIR/$rel"
+  local tarball_url="https://github.com/AaronYTDev/FYAISA/archive/refs/heads/main.tar.gz"
+
+  mkdir -p "$APP_CACHE_DIR"
+
+  if [[ -d "$cache_dir" ]]; then
+    # Update: pull latest from GitHub
+    info "Updating $rel from GitHub…"
+    (
+      cd "$cache_dir" || exit 1
+      git fetch --depth 1 origin main 2>/dev/null && git reset --hard origin/main 2>/dev/null
+    ) || {
+      # Not a git repo or fetch failed: re-download
+      rm -rf "$cache_dir"
+      _download_app_source "$rel" "$cache_dir" "$tarball_url" || return 1
+    }
+  else
+    _download_app_source "$rel" "$cache_dir" "$tarball_url" || return 1
+  fi
+
+  printf '%s' "$cache_dir"
+}
+
+_download_app_source() {
+  local rel="$1" cache_dir="$2" tarball_url="$3"
+  local tmp; tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+
+  info "Downloading $rel from GitHub…"
+  curl -fsSL "$tarball_url" -o "$tmp/repo.tar.gz" || return 1
+
+  # Extract just the app directory from the tarball
+  mkdir -p "$cache_dir"
+  tar -xzf "$tmp/repo.tar.gz" -C "$tmp" --wildcards "FYAISA-main/$rel/*" 2>/dev/null || {
+    # Fallback: extract everything and copy
+    tar -xzf "$tmp/repo.tar.gz" -C "$tmp" 2>/dev/null || return 1
+    rm -rf "$cache_dir"
+    mkdir -p "$cache_dir"
+    cp -r "$tmp/FYAISA-main/$rel"/* "$cache_dir/" 2>/dev/null || return 1
+  }
+
+  # Move files from the nested directory if needed
+  if [[ -d "$tmp/FYAISA-main/$rel" ]]; then
+    rm -rf "$cache_dir"
+    mkdir -p "$cache_dir"
+    cp -r "$tmp/FYAISA-main/$rel"/* "$cache_dir/"
+  fi
+
+  rm -rf "$tmp"
+  return 0
+}
+
 app_src_dir() {
   local rel; rel="$(app_path "$1")"
   [[ -n "$rel" ]] || die "App '$1' is not in the catalog."
-  local dir="$LOCAL_DIR/$rel"
-  [[ -d "$dir" ]] || die "App source not found at $dir
-  Clone the hub first:  git clone $REPO_URL $LOCAL_DIR"
-  printf '%s' "$dir"
+
+  if [[ -n "$LOCAL_DIR" && -d "$LOCAL_DIR/$rel" && "$LOCAL_DIR" != "$SCRIPT_DIR" ]]; then
+    # Explicit --dir flag: use local checkout
+    printf '%s' "$LOCAL_DIR/$rel"
+  elif [[ -d "$LOCAL_DIR/$rel" && -f "$LOCAL_DIR/.git/HEAD" ]]; then
+    # Running from a git checkout: use local source
+    printf '%s' "$LOCAL_DIR/$rel"
+  else
+    # Default: fetch from GitHub
+    fetch_app_source "$rel"
+  fi
 }
 
 build_app() {
@@ -422,6 +490,99 @@ cmd_devices() {
   fi
 }
 
+cmd_add_app() {
+  [[ $# -ge 1 ]] || die "Usage: fyaisa add-app <name> [--template vegatube|snake|doom|fileexplorer]"
+  local name="$1"
+  local template="${2:-vegatube}"
+  local slug; slug="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+  [[ -n "$slug" ]] || die "Invalid app name: $name"
+
+  local dir="apps/$slug"
+  if [[ -d "$dir" ]]; then
+    die "App directory already exists: $dir"
+  fi
+
+  info "Creating new app: $name ($dir)"
+
+  # Copy template
+  case "$template" in
+    vegatube) cp -r "$SCRIPT_DIR/apps/vegatube" "$dir" ;;
+    snake) cp -r "$SCRIPT_DIR/apps/snake" "$dir" ;;
+    doom) cp -r "$SCRIPT_DIR/apps/doom" "$dir" ;;
+    fileexplorer) cp -r "$SCRIPT_DIR/apps/fileexplorer" "$dir" ;;
+    *) die "Unknown template: $template (use: vegatube, snake, doom, fileexplorer)" ;;
+  esac
+
+  # Remove build artifacts
+  rm -rf "$dir/node_modules" "$dir/build" "$dir/buildinfo.json"
+
+  # Update manifest
+  sed -i "s/title = \".*\"/title = \"$name\"/" "$dir/manifest.toml"
+  sed -i "s/id = \".*\"/id = \"app.$slug\"/" "$dir/manifest.toml"
+
+  # Update package.json
+  sed -i "s/\"name\": \".*\"/\"name\": \"@fyaisa\/$slug\"/" "$dir/package.json"
+  sed -i "s/\"version\": \".*\"/\"version\": \"1.0.0\"/" "$dir/package.json"
+
+  # Update app.json
+  cat > "$dir/app.json" <<EOF
+{
+  "//": "The declared app name must follow this pattern to be KRL-compatible",
+  "name": "app.$slug.main",
+  "displayName": "$name"
+}
+EOF
+
+  # Add to catalog.json
+  python3 -c "
+import json
+with open('$SCRIPT_DIR/catalog.json', 'r') as f:
+    cat = json.load(f)
+new_app = {
+    'id': 'app.$slug.main',
+    'name': '$name',
+    'summary': 'TODO: Add a one-line summary.',
+    'description': 'TODO: Add a full description.',
+    'path': 'apps/$slug',
+    'license': 'GPL-3.0-only',
+    'author': 'FYAISA contributors',
+    'homepage': 'https://github.com/AaronYTDev/FYAISA',
+    'minOsVersion': '1.2',
+    'targetOsVersion': '1.2',
+    'architectures': ['armv7', 'aarch64', 'x86_64'],
+    'tags': [],
+    'containsAds': False,
+    'requiresNetwork': True,
+    'drm': False,
+    'status': 'beta',
+    'version': '1.0.0',
+    'updated': '2026-10-10',
+    'install': {
+        'kind': 'vpkg-release',
+        'release': 'https://api.github.com/repos/AaronYTDev/FYAISA/releases',
+        'note': 'Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/$slug with the Vega SDK.'
+    },
+    'notes': [
+        'TODO: Add notes about this app.',
+        'Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore.'
+    ]
+}
+cat['apps'].insert(0, new_app)
+with open('$SCRIPT_DIR/catalog.json', 'w') as f:
+    json.dump(cat, f, indent=2)
+    f.write('\n')
+"
+
+  ok "App created at $dir"
+  info "Next steps:"
+  info "  1. Edit $dir/manifest.toml with your app details"
+  info "  2. Edit $dir/src/App.tsx with your app logic"
+  info "  3. Update the catalog entry in catalog.json"
+  info "  4. Add an icon at $dir/assets/image/$slug.png"
+  info "  5. Build and test: fyaisa install app.$slug.main"
+  info "  6. Push to GitHub and open a PR"
+}
+
 main() {
   setup_env
   case "$CMD" in
@@ -431,6 +592,7 @@ main() {
     install) cmd_install "${1:-}" ;;
     update) cmd_update "${1:-}" ;;
     uninstall) cmd_uninstall "${1:-}" ;;
+    add-app) cmd_add_app "$@" ;;
     devices) cmd_devices ;;
     approve) cmd_approve "$@" ;;
     connect) cmd_connect "$@" ;;

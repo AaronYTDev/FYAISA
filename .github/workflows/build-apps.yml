@@ -1,0 +1,117 @@
+name: Build and Validate Apps
+
+on:
+  pull_request:
+    paths:
+      - 'apps/**'
+      - 'catalog.json'
+      - 'bridge/**'
+      - 'installer/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate catalog.json
+        run: |
+          python3 -c "
+          import json, sys
+          with open('catalog.json') as f:
+              cat = json.load(f)
+          errors = []
+          for app in cat.get('apps', []):
+              if not app.get('id'):
+                  errors.append(f'Missing id: {app}')
+              if not app.get('name'):
+                  errors.append(f'Missing name: {app.get(\"id\")}')
+              if not app.get('path'):
+                  errors.append(f'Missing path: {app.get(\"id\")}')
+              if not app.get('version'):
+                  errors.append(f'Missing version: {app.get(\"id\")}')
+          if errors:
+              for e in errors:
+                  print(f'ERROR: {e}', file=sys.stderr)
+              sys.exit(1)
+          print(f'Catalog valid: {len(cat.get(\"apps\", []))} apps')
+          "
+
+      - name: Check app directories exist
+        run: |
+          python3 -c "
+          import json, os, sys
+          with open('catalog.json') as f:
+              cat = json.load(f)
+          errors = []
+          for app in cat.get('apps', []):
+              path = app.get('path', '')
+              if path and not os.path.isdir(path):
+                  errors.append(f'Missing directory: {path} (for {app.get(\"id\")})')
+              manifest = os.path.join(path, 'manifest.toml') if path else ''
+              if manifest and not os.path.isfile(manifest):
+                  errors.append(f'Missing manifest.toml: {manifest}')
+          if errors:
+              for e in errors:
+                  print(f'ERROR: {e}', file=sys.stderr)
+              sys.exit(1)
+          print('All app directories and manifests exist')
+          "
+
+      - name: Check for required files
+        run: |
+          python3 -c "
+          import json, os, sys
+          with open('catalog.json') as f:
+              cat = json.load(f)
+          errors = []
+          for app in cat.get('apps', []):
+              path = app.get('path', '')
+              if not path:
+                  continue
+              required = ['package.json', 'app.json', 'index.js', 'src/App.tsx']
+              for f in required:
+                  fp = os.path.join(path, f)
+                  if not os.path.isfile(fp):
+                      errors.append(f'Missing {f}: {fp} (for {app.get(\"id\")})')
+          if errors:
+              for e in errors:
+                  print(f'ERROR: {e}', file=sys.stderr)
+              sys.exit(1)
+          print('All required files present')
+          "
+
+  build:
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get changed apps
+        id: changed
+        run: |
+          CHANGED=$(git diff --name-only origin/main...HEAD | grep '^apps/' | cut -d'/' -f2 | sort -u | tr '\n' ' ')
+          echo "apps=$CHANGED" >> $GITHUB_OUTPUT
+          echo "Changed apps: $CHANGED"
+
+      - name: Build changed apps
+        run: |
+          for app in ${{ steps.changed.outputs.apps }}; do
+            echo "Building $app..."
+            cd apps/$app
+            npm install --no-audit --no-fund
+            npm run build:release
+            cd ../..
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-vpks
+          path: apps/*/build/armv7-release/*.vpkg
+          if-no-files-found: warn
