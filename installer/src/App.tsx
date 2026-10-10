@@ -12,7 +12,7 @@
  * feature — see apps/README.md.
  */
 import * as React from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -452,6 +452,10 @@ export const App = () => {
     [bridgeFetch],
   );
 
+  // The splash screen is dismissed exactly once, by the first fetch — loadCatalog
+  // is also re-run by the manual Refresh button and must not touch it again.
+  const splashHiddenRef = useRef(false);
+
   const loadCatalog = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -476,7 +480,10 @@ export const App = () => {
       setCatalog(FALLBACK_CATALOG);
     } finally {
       setLoading(false);
-      hideSplashScreenCallback();
+      if (!splashHiddenRef.current) {
+        splashHiddenRef.current = true;
+        hideSplashScreenCallback();
+      }
     }
   }, [hideSplashScreenCallback]);
 
@@ -819,7 +826,7 @@ export const App = () => {
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#fff" />
-          <Text style={styles.dim}>Loading catalog…</Text>
+          <Text style={styles.dim}>{catalog ? 'Refreshing catalog…' : 'Loading catalog…'}</Text>
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
@@ -828,6 +835,22 @@ export const App = () => {
               Could not reach GitHub ({error}). Showing the built-in list.
             </Text>
           ) : null}
+
+          {/* Refresh: re-runs the exact fetch the app does on launch — the live
+              catalog from the repo (same source `fyaisa` prints on the PC),
+              falling back to the built-in list if GitHub is unreachable. */}
+          <Pressable
+            focusable
+            style={({focused}) => [styles.row, focused && styles.rowFocused, focused && styles.focused]}
+            onPress={() => loadCatalog()}>
+            <View style={styles.rowMain}>
+              <Text style={styles.rowTitle}>Refresh</Text>
+              <Text style={styles.rowSummary} numberOfLines={2}>
+                Re-fetch the app list from GitHub — the same catalog `fyaisa` prints on
+                your PC
+              </Text>
+            </View>
+          </Pressable>
 
           {apps.length === 0 ? (
             <Text style={styles.dim}>No apps in the catalog yet.</Text>
