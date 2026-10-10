@@ -38,6 +38,40 @@
       } catch (e) {}
     }
 
+    // Defensive audio unlock. The platform renders the WebView's Web Audio only
+    // when the app declares the audio services (see manifest.toml); with those
+    // in place the engine's AudioContext starts in the "running" state. If a
+    // future WebView blocks autoplay, resuming on the first real input costs
+    // nothing, so capture any context the engine creates and resume it then.
+    var audioCtxs = [];
+    (function () {
+      var Real = window.AudioContext || window.webkitAudioContext;
+      if (!Real) { return; }
+      function Wrapped() {
+        var ctx = arguments.length ? new Real(arguments[0]) : new Real();
+        audioCtxs.push(ctx);
+        return ctx;
+      }
+      Wrapped.prototype = Real.prototype;
+      window.AudioContext = Wrapped;
+      window.webkitAudioContext = Wrapped;
+    })();
+
+    // Emscripten keeps its device under Module.SDL2; reach it directly too.
+    function sdlCtx() {
+      try { return (window.Module && window.Module.SDL2 && window.Module.SDL2.audioContext) || null; }
+      catch (e) { return null; }
+    }
+
+    function resumeAudio() {
+      var c = sdlCtx();
+      if (c && c.state === 'suspended') { try { c.resume(); } catch (e) {} }
+      for (var i = 0; i < audioCtxs.length; i++) {
+        var x = audioCtxs[i];
+        try { if (x.state === 'suspended') { x.resume(); } } catch (e) {}
+      }
+    }
+
     // Emscripten reads this global at startup; SDL2 draws into canvas.
     window.Module = {
       canvas: canvas,
@@ -95,6 +129,7 @@
     // OK sends Ctrl with Enter: DOOM fires on Ctrl and ignores Enter in play,
     // selects on Enter and ignores Ctrl in menus, so one button does both.
     function syn(key, code, keyCode, type) {
+      resumeAudio(); // a real press is the gesture that unlocks sound
       var ev;
       try {
         ev = new KeyboardEvent(type, {
@@ -171,6 +206,7 @@
     };
 
     function onKey(e) {
+      resumeAudio(); // every remote press; ensures audio unlocks for real
       var k = e.key;
       var up = e.type === 'keyup';
       if (k === 'MediaPlayPause' || k === 'MediaStop') {

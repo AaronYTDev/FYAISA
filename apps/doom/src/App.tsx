@@ -174,6 +174,10 @@ export const App = () => {
         hasTVPreferredFocus
         javaScriptEnabled
         domStorageEnabled
+        // Let the Web Audio context (SDL_mixer's output) start without a
+        // gesture; the remote's first press resumes it if the WebView still
+        // holds it suspended.
+        mediaPlaybackRequiresUserAction={false}
         onLoad={onLoad}
         onError={onError}
         onMessage={onMessage}

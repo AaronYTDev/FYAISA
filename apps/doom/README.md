@@ -48,6 +48,11 @@ drops you in E1M1.
   always runs.
 - Engine startup lines reach the device log as `[doom]` entries
   (`vega device start-log-stream`), and a boot failure shows on screen.
+- Sound needs the platform audio services declared in `manifest.toml`
+  (`com.amazon.audio.control`, `com.amazon.audio.stream`, the media
+  services). The WebView does not render Web Audio itself; without those
+  wants the app cannot bind the audio service, the audio manager fails to
+  initialize and output stays silent even though SDL_mixer opens its device.
 
 ## Build
 
@@ -62,8 +67,9 @@ the doomgeneric clone: `npm run build:wasm`.
 
 ## Limits
 
-- No sound: the build drops SDL2_mixer so there is no timidity config to
-  carry. Episode One plays in silence.
+- Sound effects play through SDL2_mixer; music does not. MIDI music needs a
+  GUS patch set (timidity) that doomgeneric does not ship, so only the
+  sound-effect path is built (`-sSDL2_MIXER_FORMATS=[]`).
 - Config and saves live in the WebView's memory and reset on exit.
 - The Play/Pause, Rewind/Fast-forward and Menu mappings only apply if the
   remote's key reaches the page at all; if not, D-pad, OK and Back still

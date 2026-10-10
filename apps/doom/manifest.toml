@@ -41,3 +41,37 @@ id = "com.amazon.webview.renderer_service"
 # D-pad and remote keys must reach the page
 [[wants.service]]
 id = "com.amazon.inputmethod.service"
+
+# Audio/media services. Web Audio inside the WebView is rendered by the
+# platform's audio backend, not internally by Chromium. Without these
+# declarations app.doom cannot bind com.amazon.audio.control: the audio
+# manager and audio focus fail to initialize, and Chromium defers the audio
+# output ("Start of output audio is deferred"), so the game is silent even
+# though SDL_mixer opened its device successfully.
+[[wants.service]]
+id = "com.amazon.media.server"
+
+[[wants.service]]
+id = "com.amazon.mediametrics.service"
+
+[[wants.service]]
+id = "com.amazon.mediabuffer.service"
+
+[[wants.service]]
+id = "com.amazon.mediatransform.service"
+
+[[wants.service]]
+id = "com.amazon.audio.stream"
+
+[[wants.service]]
+id = "com.amazon.audio.control"
+
+[[wants.service]]
+id = "com.amazon.kepler.ucc.publisher"
+
+[[wants.service]]
+id = "com.amazon.gipc.uuid.*"
+
+[offers]
+[[offers.service]]
+id = "com.amazon.gipc.uuid.*"
