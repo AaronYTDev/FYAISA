@@ -253,7 +253,16 @@ export const App = () => {
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
-  const apps = useMemo(() => (catalog?.apps ?? []).filter(a => a.id !== 'app.cinevega.main'), [catalog]);
+  const apps = useMemo(() => {
+    const all = (catalog?.apps ?? []).filter(a => a.id !== 'app.cinevega.main');
+    // FYAISA updates last: updating it closes the hub, so anything after it
+    // would never get updated by "Update All".
+    return [...all].sort((a, b) => {
+      if (a.id === 'app.fyaisa.hub.main') return 1;
+      if (b.id === 'app.fyaisa.hub.main') return -1;
+      return 0;
+    });
+  }, [catalog]);
   const selected = useMemo(
     () => apps.find(a => a.id === selectedId) ?? null,
     [apps, selectedId],
