@@ -11,6 +11,46 @@
   "schemaVersion": 1,
   "apps": [
     {
+      "id": "app.aether.main",
+      "name": "Aether",
+      "summary": "Open-source streaming for Movies / TV / Anime with no popup ads and no captchas.",
+      "description": "Aether (aether.ist) is an open-source P-Stream fork that aggregates Movies, TV and Anime streams in a clean modern interface. No popup ads, no captchas, no sign-up required. Supports 1080p/4K, auto-next, watch lists, and runs entirely in a Vega WebView on your Fire TV.",
+      "path": "apps/aether",
+      "license": "GPL-3.0-only",
+      "author": "FYAISA contributors",
+      "homepage": "https://github.com/AaronYTDev/FYAISA",
+      "minOsVersion": "1.2",
+      "targetOsVersion": "1.2",
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "movies",
+        "tv",
+        "anime",
+        "streaming",
+        "webview",
+        "open-source"
+      ],
+      "containsAds": false,
+      "requiresNetwork": true,
+      "drm": false,
+      "status": "stable",
+      "version": "1.0.0",
+      "updated": "2026-10-10",
+      "install": {
+        "kind": "vpkg-release",
+        "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/aether with the Vega SDK."
+      },
+      "notes": [
+        "Open-source P-Stream fork: no popup ads, no captchas, no sign-up required.",
+        "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ]
+    },
+    {
       "id": "app.vegatube.main",
       "name": "VegaTube",
       "summary": "Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks.",
