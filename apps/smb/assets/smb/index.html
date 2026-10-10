@@ -50,6 +50,79 @@
       } catch (e) {}
     }
 
+    // ---- Audio ----
+    // jsnes hands us stereo samples (left, right in -1..1) as it runs. They
+    // go into a ring buffer that a ScriptProcessor drains to the speakers: on
+    // underrun we emit silence, on overrun we drop the oldest, so a slow frame
+    // never stalls the emulator and a fast one never grows without bound.
+    var AUDIO_CAP = 16384; // ~0.34 s at 48 kHz, a comfortable cushion
+    var AUDIO_MASK = AUDIO_CAP - 1;
+    var audioCtx = null;
+    var audioNode = null;
+    var aL = new Float32Array(AUDIO_CAP);
+    var aR = new Float32Array(AUDIO_CAP);
+    var aWrite = 0, aRead = 0, aAvail = 0;
+
+    function audioPush(left, right) {
+      aL[aWrite] = left;
+      aR[aWrite] = right;
+      aWrite = (aWrite + 1) & AUDIO_MASK;
+      if (aAvail < AUDIO_CAP) { aAvail++; }
+      else { aRead = (aRead + 1) & AUDIO_MASK; } // overran: drop the oldest
+    }
+
+    function audioPull(outL, outR, n) {
+      for (var i = 0; i < n; i++) {
+        if (aAvail > 0) {
+          outL[i] = aL[aRead];
+          outR[i] = aR[aRead];
+          aRead = (aRead + 1) & AUDIO_MASK;
+          aAvail--;
+        } else {
+          outL[i] = 0;
+          outR[i] = 0;
+        }
+      }
+    }
+
+    // The context is created up front so the emulator knows the device's
+    // sample rate before the ROM boots; Chromium may start it suspended until
+    // a gesture, so resumeAudio runs on the first button and on boot.
+    function initAudio() {
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) { send('no Web Audio; running silent'); return; }
+        audioCtx = new AC();
+        // 0 inputs is the pull-only form; a WebView that rejects it gets a
+        // silent 1-input node instead (nothing is connected to that input).
+        try {
+          audioNode = audioCtx.createScriptProcessor(2048, 0, 2);
+        } catch (e0) {
+          audioNode = audioCtx.createScriptProcessor(2048, 1, 2);
+        }
+        audioNode.onaudioprocess = function (e) {
+          var ob = e.outputBuffer;
+          audioPull(ob.getChannelData(0), ob.getChannelData(1), ob.length);
+        };
+        audioNode.connect(audioCtx.destination);
+        send('audio ready at ' + audioCtx.sampleRate + ' Hz');
+      } catch (err) {
+        audioCtx = null;
+        send('audio init failed: ' + err);
+      }
+    }
+
+    function resumeAudio() {
+      try {
+        if (audioCtx && audioCtx.state === 'suspended') {
+          aRead = aWrite; aAvail = 0; // drop whatever queued while suspended
+          audioCtx.resume();
+        }
+      } catch (e) {}
+    }
+
+    initAudio();
+
     // ROM chunk assembly: order-independent, each slice stores itself under
     // its index and counts; the full set triggers the boot. Same pattern as
     // the DOOM shell and VegaTube's injection.
@@ -72,6 +145,8 @@
         // base64 -> binary string: jsnes reads the ROM with charCodeAt.
         var rom = atob(joined);
         nes = new jsnes.NES({
+          // Match the device's output rate so jsnes does not resample.
+          sampleRate: audioCtx ? audioCtx.sampleRate : 48000,
           onFrame: function (fb) {
             // jsnes stores each pixel as a 32-bit word whose bytes are
             // R,G,B in memory, that is, numerically 0x00BBGGRR with red in
@@ -86,11 +161,12 @@
             }
             ctx.putImageData(frame, 0, 0);
           },
-          onAudioSample: function () {}
+          onAudioSample: function (left, right) { audioPush(left, right); }
         });
         nes.loadROM(rom);
         loader.style.display = 'none';
         running = true;
+        resumeAudio();
         requestAnimationFrame(loop);
         send('running');
       } catch (e) {
@@ -134,6 +210,7 @@
       if (any) { nes.buttonDown(1, BTN[btn]); } else { nes.buttonUp(1, BTN[btn]); }
     }
     function hold(btn, source, down) {
+      resumeAudio();
       if (!(btn in BTN)) { return; }
       if (!src[btn]) { src[btn] = {}; }
       if (down) { src[btn][source] = true; } else { delete src[btn][source]; }
@@ -146,6 +223,7 @@
     // a native forward of the same physical press do not double-fire.
     var lastTap = {};
     function tap(btn) {
+      resumeAudio();
       if (held[btn]) { return; }
       var now = Date.now();
       if (lastTap[btn] && now - lastTap[btn] < 150) { return; }
@@ -159,6 +237,7 @@
     // reach the page directly; the media and Menu buttons are forwarded from
     // React Native, and this is the fallback if any of them arrive here too.
     function onKey(e) {
+      resumeAudio(); // a button press is the gesture that unlocks audio
       var k = e.key;
       var down = e.type === 'keydown';
       var name = null;
