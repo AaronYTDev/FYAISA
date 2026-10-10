@@ -1,8 +1,8 @@
 {
-  "name": "@fyaisa/aether",
+  "name": "@fyaisa/cinevega",
   "version": "1.0.0",
   "private": true,
-  "description": "Aether streaming for Vega OS Fire TV Sticks (FYAISA hub app).",
+  "description": "Cinevega streaming for Vega OS Fire TV Sticks (FYAISA hub app).",
   "author": "FYAISA contributors",
   "license": "GPL-3.0-only",
   "files": [
@@ -38,7 +38,7 @@
   },
   "kepler": {
     "projectType": "application",
-    "appName": "aether",
+    "appName": "cinevega",
     "targets": [
       "tv"
     ]

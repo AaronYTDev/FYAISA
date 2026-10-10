@@ -1,10 +1,10 @@
 schema-version = 1
 
 [package]
-title = "Aether"
+title = "Cinevega"
 version = "1.0.0"
-id = "app.aether"
-icon = "@image/aether.png"
+id = "app.cinevega"
+icon = "@image/cinevega.png"
 
 [os.version]
 min = "1.2"
@@ -28,7 +28,7 @@ id = "/com.amazon.kepler.kepler_file_system_0@IKeplerFileSystem_0"
 
 [components]
 [[components.interactive]]
-id = "app.aether.main"
+id = "app.cinevega.main"
 runtime-module = "/com.amazon.kepler.runtime.react_native_kepler_4@IReactNativeKepler_0"
 launch-type = "singleton"
 categories = ["com.amazon.category.main"]

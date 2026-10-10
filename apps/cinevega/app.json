@@ -1,5 +1,5 @@
 {
   "//": "The declared app name must follow this pattern to be KRL-compatible",
-  "name": "app.aether.main",
-  "displayName": "Aether"
+  "name": "app.cinevega.main",
+  "displayName": "Cinevega"
 }

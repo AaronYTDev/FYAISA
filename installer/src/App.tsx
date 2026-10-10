@@ -37,7 +37,7 @@ const APP_ICONS: Record<string, any> = {
   'app.doom.main': require('../assets/image/doom.png'),
   'app.vegatube.main': require('../assets/image/vegatube.png'),
   'app.fyaisa.files.main': require('../assets/image/fileexplorer.png'),
-  'app.aether.main': require('../assets/image/aether.png'),
+  'app.cinevega.main': require('../assets/image/cinevega.png'),
 };
 
 type HubApp = {

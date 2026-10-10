@@ -11,11 +11,11 @@
   "schemaVersion": 1,
   "apps": [
     {
-      "id": "app.aether.main",
-      "name": "Aether",
-      "summary": "Open-source streaming for Movies / TV / Anime with no popup ads and no captchas.",
-      "description": "Aether (aether.ist) is an open-source P-Stream fork that aggregates Movies, TV and Anime streams in a clean modern interface. No popup ads, no captchas, no sign-up required. Supports 1080p/4K, auto-next, watch lists, and runs entirely in a Vega WebView on your Fire TV.",
-      "path": "apps/aether",
+      "id": "app.cinevega.main",
+      "name": "Cinevega",
+      "summary": "Movies and TV streaming with a native TV interface. TMDB metadata, VidSrc playback.",
+      "description": "Cinevega is a native React Native streaming app for Vega OS Fire TV Sticks. Browse trending, popular movies and TV shows with full TMDB metadata (posters, overviews, ratings), search, and play through VidSrc. No WebView browsing, no captchas, no sign-up. D-pad navigable interface designed for the couch.",
+      "path": "apps/cinevega",
       "license": "GPL-3.0-only",
       "author": "FYAISA contributors",
       "homepage": "https://github.com/AaronYTDev/FYAISA",
@@ -29,10 +29,10 @@
       "tags": [
         "movies",
         "tv",
-        "anime",
         "streaming",
-        "webview",
-        "open-source"
+        "tmdb",
+        "vidsrc",
+        "native"
       ],
       "containsAds": false,
       "requiresNetwork": true,
@@ -43,10 +43,10 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/aether with the Vega SDK."
+        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/cinevega with the Vega SDK."
       },
       "notes": [
-        "Open-source P-Stream fork: no popup ads, no captchas, no sign-up required.",
+        "Native React Native frontend with TMDB metadata and VidSrc playback.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },
