@@ -260,15 +260,23 @@ slow commands are killed at the timeout. Anything else is a `403`; see
 
 ## 7. Ship your own app to the hub
 
-1. Copy the reference app: `cp -r apps/vegatube apps/my-app`, then change
-   `manifest.toml` (app id, name), `package.json` (name, `vega` config) and the
-   source.
-2. Register it in `catalog.json` (one entry per app; see the schema fields on
-   the existing entry).
-3. Open a PR. After it merges, `fyaisa list` and the TV app show it.
+1. Scaffold it: `fyaisa add-app <name>` (copies a template, updates the
+   catalog, prints next steps). Templates: `vegatube`, `snake`, `doom`,
+   `fileexplorer`.
+2. Edit the scaffold: `manifest.toml` (app id, name), `package.json`,
+   and `src/App.tsx`.
+3. Register it in `catalog.json` if the scaffolder didn't (one entry per
+   app; see the schema fields on the existing entry).
+4. Open a PR. GitHub Actions validates the catalog and builds changed
+   apps. After it merges, `fyaisa list` and the TV app show it.
 
 The full contract (naming, licensing, catalog fields) is in
 [`apps/README.md`](../apps/README.md).
+
+Apps are pulled from GitHub by default: `fyaisa install` and the bridge
+download app source from the repo tarball into `~/.fyaisa/app-cache/`,
+so contributors don't need a local clone. Use `--dir` to build from a
+local checkout instead.
 
 ## 8. Vega OS gotchas
 

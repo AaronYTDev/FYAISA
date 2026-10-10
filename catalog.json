@@ -11,6 +11,43 @@
   "schemaVersion": 1,
   "apps": [
     {
+      "id": "app.fyaisa.hub.main",
+      "name": "FYAISA",
+      "summary": "The FYAISA hub app itself. Update it from here.",
+      "description": "The FYAISA homebrew hub for Vega OS Fire TV devices. Browse, install and update homebrew apps from your couch. This is the hub app itself, listed so you can update it from within.",
+      "path": "installer",
+      "license": "GPL-3.0-only",
+      "author": "FYAISA contributors",
+      "homepage": "https://github.com/AaronYTDev/FYAISA",
+      "minOsVersion": "1.2",
+      "targetOsVersion": "1.2",
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "hub",
+        "fyaisa",
+        "homebrew"
+      ],
+      "containsAds": false,
+      "requiresNetwork": true,
+      "drm": false,
+      "status": "stable",
+      "version": "1.2.0",
+      "updated": "2026-10-10",
+      "install": {
+        "kind": "vpkg-release",
+        "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from installer/ with the Vega SDK."
+      },
+      "notes": [
+        "The FYAISA hub app itself. Update it from here.",
+        "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ]
+    },
+    {
       "id": "app.cinevega.main",
       "name": "Cinevega",
       "summary": "Movies and TV streaming with a native TV interface. TMDB metadata, VidSrc playback.",

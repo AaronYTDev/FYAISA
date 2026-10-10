@@ -38,6 +38,7 @@ const APP_ICONS: Record<string, any> = {
   'app.vegatube.main': require('../assets/image/vegatube.png'),
   'app.fyaisa.files.main': require('../assets/image/fileexplorer.png'),
   'app.cinevega.main': require('../assets/image/cinevega.png'),
+  'app.fyaisa.hub.main': require('../assets/image/fyaisa.png'),
 };
 
 type HubApp = {
