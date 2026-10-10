@@ -1,16 +1,3 @@
-# Credits for various apps below.
-
-
-## VegaTube (formerly TizenTube Vega)
-#### aaronYTDev - Porting TizenTube to Vega OS
-#### ReisXD - Original TizenTube
-#### FYAISA - pairing API, hub and example-app integration
-
-## ElevSH Files
-#### aaronYTDev - ElevSH Files, the D-pad browsing UX
-#### FYAISA - pairing API, ElevSH bridge and vendored fyaisaClient.ts
-
----
 
 ## App format
 
