@@ -248,8 +248,6 @@ export const App = () => {
   const [installed, setInstalled] = useState<Set<string>>(new Set());
   /** Update-all progress; null while no update-all run is going on. */
   const [updateAll, setUpdateAll] = useState<{done: number; total: number; current: string} | null>(null);
-  /** Detail-view Remove button: the first press arms it, the second removes. */
-  const [confirmRemove, setConfirmRemove] = useState(false);
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
@@ -524,31 +522,9 @@ export const App = () => {
     [bridgeFetch, refreshInstalled],
   );
 
-  /** Remove an app from the device over ElevSH, then refresh installed state. */
-  const requestUninstall = useCallback(
-    async (appId: string) => {
-      try {
-        const r = await bridgeFetch('/uninstall', {
-          method: 'POST',
-          body: JSON.stringify({appId}),
-        });
-        if (!r.ok) {
-          throw new Error((r.log || []).slice(-1)[0] || `remove failed for ${appId}`);
-        }
-        console.info(`[FYAISA] removed ${appId}`);
-        setPair(p => ({...p, message: `Removed ${appId}`}));
-        await refreshInstalled();
-      } catch (e: any) {
-        setPair(p => ({...p, status: 'error', message: e.message}));
-      }
-    },
-    [bridgeFetch, refreshInstalled],
-  );
-
   /**
-   * Rebuild and reinstall every catalog app, one bridge job at a time. The
-   * bridge refuses concurrent jobs (429), so each app waits out its full job
-   * before the next one is queued.
+   * Rebuild and reinstall every installed app, one bridge job at a time.
+   * Update = install (reinstalls the latest version from the catalog).
    */
   const runUpdateAll = useCallback(async () => {
     if (pair.status !== 'paired') {
@@ -559,14 +535,15 @@ export const App = () => {
       }));
       return;
     }
-    if (updateAll || !apps.length) {
+    const installedApps = apps.filter(a => installed.has(a.id));
+    if (updateAll || !installedApps.length) {
       return;
     }
-    setUpdateAll({done: 0, total: apps.length, current: ''});
+    setUpdateAll({done: 0, total: installedApps.length, current: ''});
     try {
-      for (let i = 0; i < apps.length; i++) {
-        const a = apps[i];
-        setUpdateAll({done: i, total: apps.length, current: a.name});
+      for (let i = 0; i < installedApps.length; i++) {
+        const a = installedApps[i];
+        setUpdateAll({done: i, total: installedApps.length, current: a.name});
         const {jobId} = await bridgeFetch('/install', {
           method: 'POST',
           body: JSON.stringify({appId: a.id}),
@@ -593,19 +570,14 @@ export const App = () => {
           }
         }
       }
-      setUpdateAll({done: apps.length, total: apps.length, current: ''});
+      setUpdateAll({done: installedApps.length, total: installedApps.length, current: ''});
     } catch (e: any) {
       setPair(p => ({...p, status: 'error', message: e.message}));
     } finally {
       setTimeout(() => setUpdateAll(null), 4000);
       refreshInstalled();
     }
-  }, [pair.status, apps, bridgeFetch, refreshInstalled, updateAll]);
-
-  // Switching detail views re-arms the Remove button.
-  useEffect(() => {
-    setConfirmRemove(false);
-  }, [selectedId]);
+  }, [pair.status, apps, installed, bridgeFetch, refreshInstalled, updateAll]);
 
   /** Allow / deny / revoke an app's ElevSH access from the TV. */
   const decideAccess = useCallback(
@@ -986,24 +958,7 @@ export const App = () => {
                     ))}
                   </View>
                 ) : null}
-                {installed.has(selected.id) ? (
-                  <Pressable
-                    style={focusable(styles.removeBtn)}
-                    onPress={() => {
-                      if (!confirmRemove) {
-                        setConfirmRemove(true);
-                        return;
-                      }
-                      setConfirmRemove(false);
-                      requestUninstall(selected.id);
-                    }}>
-                    <Text style={styles.removeText}>
-                      {confirmRemove
-                        ? `Press again to remove ${selected.name}`
-                        : 'Remove from device'}
-                    </Text>
-                  </Pressable>
-                ) : null}
+                
               </>
             ) : (
               <>
@@ -1351,17 +1306,6 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   forgetText: {color: '#e57373', fontSize: 16},
-  removeBtn: {
-    marginTop: 12,
-    alignSelf: 'flex-start',
-    backgroundColor: '#3a2020',
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
-  },
-  removeText: {color: '#e57373', fontSize: 16},
   accessRow: {
     flexDirection: 'row',
     alignItems: 'center',
