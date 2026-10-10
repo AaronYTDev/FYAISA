@@ -73,14 +73,15 @@
         var rom = atob(joined);
         nes = new jsnes.NES({
           onFrame: function (fb) {
-            // jsnes packs its palette as 0x00RRGGBB (getRed is bits 16-23),
-            // while ImageData wants R,G,B,A in memory order.
+            // jsnes stores each pixel as a 32-bit word whose bytes are
+            // R,G,B in memory, that is, numerically 0x00BBGGRR with red in
+            // the low byte. ImageData wants R,G,B,A in that order.
             var d = frame.data;
             for (var i = 0; i < fb.length; i++) {
               var p = fb[i];
-              d[i * 4] = (p >> 16) & 0xff;
+              d[i * 4] = p & 0xff;
               d[i * 4 + 1] = (p >> 8) & 0xff;
-              d[i * 4 + 2] = p & 0xff;
+              d[i * 4 + 2] = (p >> 16) & 0xff;
               d[i * 4 + 3] = 0xff;
             }
             ctx.putImageData(frame, 0, 0);
