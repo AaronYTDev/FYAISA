@@ -143,6 +143,14 @@ const FALLBACK_CATALOG: Catalog = {
       tags: ['files', 'explorer', 'elevsh'],
       status: 'stable',
     },
+    {
+      id: 'app.snake.main',
+      name: 'Snake',
+      summary: 'The classic snake game for your TV remote. Works offline, no account.',
+      license: 'GPL-3.0-only',
+      tags: ['game', 'snake', 'offline'],
+      status: 'stable',
+    },
   ],
 };
 
@@ -151,6 +159,12 @@ const HOST_KEYS = [
   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
   '.', '⌫',
 ];
+
+// The search keyboard: letters, digits and the two punctuation marks worth
+// searching with. Backspace/Clear/Done sit in a second row under the grid.
+const SEARCH_KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-. '.split('');
+/** Query length cap — long enough for any app name, short enough to fix typos. */
+const SEARCH_MAX = 32;
 
 const statusColor = (s?: string) =>
   s === 'stable' ? '#4caf50' : s === 'beta' ? '#ffb300' : '#9e9e9e';
@@ -190,6 +204,10 @@ export const App = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Apps menu search: the query string, plus whether the on-screen keyboard is
+  // up (a TV has no system keyboard; typing is a grid of keys you D-pad over).
+  const [query, setQuery] = useState('');
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [pair, setPair] = useState<PairState>({
     host: null,
     token: null,
@@ -487,6 +505,23 @@ export const App = () => {
     [apps, selectedId],
   );
 
+  // What the Apps menu lists: everything when the search box is empty,
+  // otherwise a case-insensitive match over the fields you'd actually type.
+  const filteredApps = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      return apps;
+    }
+    return apps.filter(
+      a =>
+        a.name.toLowerCase().includes(q) ||
+        a.id.toLowerCase().includes(q) ||
+        (a.summary ?? '').toLowerCase().includes(q) ||
+        (a.description ?? '').toLowerCase().includes(q) ||
+        (a.tags ?? []).some(t => t.toLowerCase().includes(q)),
+    );
+  }, [apps, query]);
+
   // Remote navigation is handled natively: Pressable rows take D-pad focus
   // (the first row seeded with hasTVPreferredFocus), and Back is caught through
   // BackHandler. document/window don't exist here; this is a native React
@@ -494,6 +529,10 @@ export const App = () => {
   // "ReferenceError: Property 'document' doesn't exist").
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (keyboardOpen) {
+        setKeyboardOpen(false); // close the keyboard first, keep the screen under it
+        return true;
+      }
       if (selectedId === null) return false; // main menu → let the OS close us
       if (selectedId.startsWith('__')) {
         setSelectedId(null); // any submenu → main menu
@@ -503,7 +542,7 @@ export const App = () => {
       return true;
     });
     return () => sub.remove();
-  }, [selectedId]);
+  }, [selectedId, keyboardOpen]);
 
   // Main menu: submenus (Apps / ElevSH) hang off this screen.
   if (selectedId === null) {
@@ -805,7 +844,60 @@ export const App = () => {
     );
   }
 
-  // Apps submenu (fall-through: every other view returns above).
+  // Search keyboard, shown instead of the list while it's open (Back closes
+  // it again — see the BackHandler above).
+  if (selectedId === '__apps__' && keyboardOpen) {
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <Text style={styles.brand}>Search apps</Text>
+          <Text style={styles.searchQuery}>{query || ' '}</Text>
+          <Text style={styles.searchCount}>
+            {filteredApps.length} of {apps.length} app{apps.length === 1 ? '' : 's'} match
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={styles.list}>
+          <View style={styles.keypad}>
+            {SEARCH_KEYS.map((k, i) => (
+              <Pressable
+                key={k}
+                hasTVPreferredFocus={i === 0}
+                focusable
+                style={({focused}) => [styles.key, focused && styles.keyFocused]}
+                onPress={() => setQuery(q => (q.length >= SEARCH_MAX ? q : q + k))}>
+                <Text style={styles.keyText}>{k === ' ' ? '␣' : k}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <View style={styles.keypad}>
+            <Pressable
+              focusable
+              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              onPress={() => setQuery(q => q.slice(0, -1))}>
+              <Text style={styles.ctrlKeyText}>⌫ Delete</Text>
+            </Pressable>
+            <Pressable
+              focusable
+              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              onPress={() => setQuery('')}>
+              <Text style={styles.ctrlKeyText}>Clear</Text>
+            </Pressable>
+            <Pressable
+              focusable
+              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              onPress={() => setKeyboardOpen(false)}>
+              <Text style={styles.ctrlKeyText}>Done</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Apps submenu (fall-through: every other view returns above). Search and
+  // Refresh live in a toolbar pinned above the list, not inside it: nothing
+  // scrolls them out of view and the loading spinner doesn't swap them out,
+  // so they're on screen whenever the Apps menu is.
   return (
     <View style={styles.wrap}>
       <View style={styles.header}>
@@ -813,10 +905,30 @@ export const App = () => {
         {catalog?.hub?.tagline ? <Text style={styles.tagline}>{catalog.hub.tagline}</Text> : null}
       </View>
 
-      {loading ? (
+      <View style={styles.toolbar}>
+        <Pressable
+          focusable
+          style={({focused}) => [styles.searchBox, focused && styles.focused]}
+          onPress={() => setKeyboardOpen(true)}>
+          <Text style={[styles.searchText, !query && styles.searchPlaceholder]} numberOfLines={1}>
+            {query ? `"${query}"` : 'Search apps'}
+          </Text>
+        </Pressable>
+        {/* Refresh: re-runs the exact fetch the app does on launch (the live
+            catalog from the repo, same source `fyaisa` prints on the PC),
+            falling back to the built-in list if GitHub is unreachable. */}
+        <Pressable
+          focusable
+          style={({focused}) => [styles.refreshBtn, focused && styles.focused]}
+          onPress={() => loadCatalog()}>
+          <Text style={styles.refreshText}>{loading ? 'Refreshing…' : 'Refresh'}</Text>
+        </Pressable>
+      </View>
+
+      {catalog == null ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#fff" />
-          <Text style={styles.dim}>{catalog ? 'Refreshing catalog…' : 'Loading catalog…'}</Text>
+          <Text style={styles.dim}>Loading catalog…</Text>
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
@@ -825,28 +937,23 @@ export const App = () => {
               Could not reach GitHub ({error}). Showing the built-in list.
             </Text>
           ) : null}
-
-          {/* Refresh: re-runs the exact fetch the app does on launch (the live
-              catalog from the repo, same source `fyaisa` prints on the PC),
-              falling back to the built-in list if GitHub is unreachable. */}
-          <Pressable
-            focusable
-            style={({focused}) => [styles.row, focused && styles.rowFocused, focused && styles.focused]}
-            onPress={() => loadCatalog()}>
-            <View style={styles.rowMain}>
-              <Text style={styles.rowTitle}>Refresh</Text>
-              <Text style={styles.rowSummary} numberOfLines={2}>
-                Re-fetch the app list from GitHub (the same catalog `fyaisa` prints on
-                your PC
-              </Text>
-            </View>
-          </Pressable>
+          {loading ? <Text style={styles.dim}>Refreshing catalog…</Text> : null}
 
           {apps.length === 0 ? (
             <Text style={styles.dim}>No apps in the catalog yet.</Text>
+          ) : filteredApps.length === 0 ? (
+            <View>
+              <Text style={styles.dim}>No apps match "{query}".</Text>
+              <Pressable
+                focusable
+                style={({focused}) => [styles.refreshBtn, focused && styles.focused]}
+                onPress={() => setQuery('')}>
+                <Text style={styles.refreshText}>Clear search</Text>
+              </Pressable>
+            </View>
           ) : null}
 
-          {apps.map((a, i) => (
+          {filteredApps.map((a, i) => (
             <Pressable
               key={a.id}
               hasTVPreferredFocus={i === 0}
@@ -1024,6 +1131,51 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   accessBtnText: {color: '#fff', fontSize: 15, fontWeight: '600'},
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    paddingBottom: 16,
+  },
+  searchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#16161d',
+    borderRadius: 10,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    marginRight: 12,
+  },
+  searchText: {color: '#fff', fontSize: 18},
+  searchPlaceholder: {color: '#6f6f80'},
+  refreshBtn: {
+    backgroundColor: '#16161d',
+    borderRadius: 10,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    paddingHorizontal: 26,
+    paddingVertical: 14,
+    alignSelf: 'flex-start',
+  },
+  refreshText: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  searchQuery: {color: '#fff', fontSize: 26, fontWeight: '600', marginTop: 8},
+  searchCount: {color: '#77778a', fontSize: 15, marginTop: 4},
+  ctrlKey: {
+    minWidth: 130,
+    height: 58,
+    margin: 4,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: '#23232d',
+    borderWidth: 4,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ctrlKeyText: {color: '#fff', fontSize: 20},
   /**
    * The TV focus ring: a thick amber border plus a glow, appended by every
    * focusable when focused (without it the selected control is hard to see on
