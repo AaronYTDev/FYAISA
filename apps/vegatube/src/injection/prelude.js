@@ -7,13 +7,20 @@
  * Responsibilities:
  *   1. Seed TizenTube's configuration (localStorage 'ytaf-configuration') with
  *      defaults that are correct for this platform:
- *        - enableUpdater: false  — TizenTube's built-in updater targets
- *                                  TizenTube Cobalt (Android APKs); using it on
- *                                  Vega would offer an uninstallable package.
+ *        - enableUpdater: false  — always forced, not just defaulted: the
+ *                                  built-in updater targets TizenTube Cobalt
+ *                                  (wrong platform packages), and its
+ *                                  "update available" prompt would fire every
+ *                                  launch — the only upstream gate for the
+ *                                  check is the presence of h5vcc.tizentube,
+ *                                  which we deliberately provide. (The
+ *                                  settings-menu Updater section is removed
+ *                                  from the vendored script outright.)
  *        - enableFixedUI: true   — upstream defaults this to true on non-Cobalt
  *                                  web engines (the flag re-enables YouTube's
  *                                  animations / long-press on capable engines).
- *      Existing user choices are always preserved.
+ *      Existing user choices are always preserved (the updater being the
+ *      one forced exception, see above).
  *
  *   2. Provide a minimal `window.h5vcc.tizentube` bridge, mirroring the native
  *      API that TizenTube's userscript expects on Cobalt. Every call the
@@ -54,7 +61,7 @@
   try {
     var cfg = {};
     try { cfg = JSON.parse(window.localStorage.getItem(CONFIG_KEY) || '{}') || {}; } catch (_) { cfg = {}; }
-    if (typeof cfg.enableUpdater === 'undefined') cfg.enableUpdater = false;
+    cfg.enableUpdater = false; /* forced every launch — see header note */
     if (typeof cfg.enableFixedUI === 'undefined') cfg.enableFixedUI = true;
     /* On Tizen/Cobalt the userscript is injected at document-start, so
        ui.js's `reloadHomeOnStartup` -> SOFT_RELOAD_PAGE is a harmless "go to

@@ -330,6 +330,8 @@ const HOST_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
  */
 const focusRing = ({focused}: {focused: boolean}) =>
   [styles.focusBase, focused && styles.focusedRing];
+const menuFocus = ({focused}: {focused: boolean}) =>
+  [styles.menuBtnWrap, focusRing({focused})];
 
 export const App = () => {
   const webRef = useRef(null);
@@ -887,14 +889,14 @@ export const App = () => {
                 {pairCode ? (
                   <Text style={styles.menuCode}>Code: {pairCode}</Text>
                 ) : null}
-                <KeplerPressable hasTVPreferredFocus style={focusRing} onPress={() => startPair()}>
+                <KeplerPressable hasTVPreferredFocus style={menuFocus} onPress={() => startPair()}>
                   <View style={styles.menuBtn}>
                     <Text style={styles.menuBtnText}>
                       {pairCode ? 'Waiting for approval…' : 'Get pairing code'}
                     </Text>
                   </View>
                 </KeplerPressable>
-                <KeplerPressable style={focusRing} onPress={() => setMenu('menu')}>
+                <KeplerPressable style={menuFocus} onPress={() => setMenu('menu')}>
                   <View style={styles.menuBtnGhost}>
                     <Text style={styles.menuBtnText}>Back</Text>
                   </View>
@@ -903,7 +905,7 @@ export const App = () => {
             ) : (
               <>
                 {updateVersion ? (
-                  <KeplerPressable hasTVPreferredFocus style={focusRing} onPress={updateViaPc}>
+                  <KeplerPressable hasTVPreferredFocus style={menuFocus} onPress={updateViaPc}>
                     <View style={styles.menuBtn}>
                       <Text style={styles.menuBtnText}>
                         Update to v{updateVersion} via ElevSH
@@ -913,7 +915,7 @@ export const App = () => {
                 ) : null}
                 <KeplerPressable
                   hasTVPreferredFocus={!updateVersion}
-                  style={focusRing}
+                  style={menuFocus}
                   onPress={() => setMenu('pair')}>
                   <View style={styles.menuBtnGhost}>
                     <Text style={styles.menuBtnText}>
@@ -922,13 +924,13 @@ export const App = () => {
                   </View>
                 </KeplerPressable>
                 {pair ? (
-                  <KeplerPressable style={focusRing} onPress={forget}>
+                  <KeplerPressable style={menuFocus} onPress={forget}>
                     <View style={styles.menuBtnGhost}>
                       <Text style={styles.menuBtnText}>Forget ElevSH</Text>
                     </View>
                   </KeplerPressable>
                 ) : null}
-                <KeplerPressable style={focusRing} onPress={dismissMenu}>
+                <KeplerPressable style={menuFocus} onPress={dismissMenu}>
                   <View style={styles.menuBtnGhost}>
                     <Text style={styles.menuBtnText}>Continue to YouTube</Text>
                   </View>
@@ -1036,7 +1038,6 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    marginTop: 16,
     alignSelf: 'flex-start',
   },
   menuBtnGhost: {
@@ -1044,9 +1045,9 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    marginTop: 12,
     alignSelf: 'flex-start',
   },
+  menuBtnWrap: {marginTop: 16},
   menuBtnText: {color: '#ffffff', fontSize: 18},
   menuFooter: {color: '#5c5c6b', fontSize: 13, marginTop: 24},
   menuJobStatus: {color: '#7ee787', fontSize: 15, marginTop: 14},
@@ -1056,8 +1057,15 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     marginTop: 2,
   },
-  /** Transparent base border so the focus ring never shifts layout. */
-  focusBase: {borderWidth: 3, borderColor: 'transparent', borderRadius: 8},
+  /** Transparent base border so the focus ring never shifts layout.
+   *  alignSelf keeps the pressable (and thus the ring) tight around the
+   *  inner button instead of stretching to the full menu panel width. */
+  focusBase: {
+    alignSelf: 'flex-start',
+    borderWidth: 3,
+    borderColor: 'transparent',
+    borderRadius: 8,
+  },
   focusedRing: {
     borderColor: '#ffb02e',
     shadowColor: '#ffb02e',
