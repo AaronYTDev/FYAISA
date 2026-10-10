@@ -47,9 +47,9 @@ apps/<app-dir>/
    license into the app directory.
 8. Be honest in `containsAds` / `requiresNetwork` / `drm`. Users are
    installing unknown binaries onto their TV.
-9. Add a credits section at the top for your app, listing yourself and the
-   upstream project it derives from. This section is the part contributors
-   are expected to edit.
+9. Add a credits section at the top of your app's README, listing yourself
+   and the upstream project it derives from. This section is the part
+   contributors are expected to edit.
 
 ## Adding your app
 
