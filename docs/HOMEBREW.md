@@ -151,6 +151,42 @@ changed any time from the FYAISA ElevSH screen. Until an app is allowed, its
 token-authenticated requests fail with `403` and `code: 'access_required'`;
 after a Deny, `code: 'access_denied'`.
 
+### Patch installs (`POST /install` with `patch: true`)
+
+A catalog entry can declare that it's a **patched build of another app**:
+
+```json
+"patch": {"for": "com.amazon.firetv.youtube.main", "name": "YouTube"}
+```
+
+Calling `POST /install` with `{"patch": true}` makes the bridge rebuild the
+app *under the original app's identity*:
+
+1. The project is copied to a scratch dir (`~/.fyaisa/patch-build/<id>`) with
+   `node_modules` and build artifacts left behind — the working tree stays
+   untouched — and dependencies are installed fresh in the copy (Metro won't
+   resolve modules through a symlinked `node_modules`).
+2. `manifest.toml`, `app.json` and `package.json` are rewritten: package id,
+   component id and app name become `patch.for`, the display name/title become
+   `patch.name`, and **the version is forced to `99.99.99`** — always.
+3. The patch is built, then the **original app is uninstalled**, then the
+   patch is installed under the original's id.
+
+Why: the shell (and the remote's shortcut button for the original app) now
+launches the patched build, it *looks* like the original app in the launcher,
+and because 99.99.99 beats every official version number, an update from the
+store can never silently replace the patch. The original is gone — installing
+a patch means living with the patched build.
+
+Two deliberate details:
+
+- **The target comes from the catalog, never from the request.** The bridge
+  validates `patch.for` against `catalog.json`, so only whoever controls the
+  repo can choose which app id a patch takes over.
+- **Build first, uninstall second.** If the rewrite doesn't compile, the
+  original is still there; a system-protected original that refuses
+  `uninstall-app` is logged and the patch installs over it instead.
+
 ## 6. Access the Vega CLI from your app (`/vega`)
 
 Homebrew apps don't have to stop at pairing for installs: the bridge can also

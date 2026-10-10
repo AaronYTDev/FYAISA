@@ -118,9 +118,17 @@ export class Fyaisa {
     };
   }
 
-  /** Queue a build + install on the PC; poll job() for the build log. */
-  install(appId: string): Promise<{jobId: string}> {
-    return this.req('/install', {method: 'POST', body: JSON.stringify({appId})});
+  /**
+   * Queue a build + install on the PC; poll job() for the build log.
+   * Pass {patch: true} for a patch install: the bridge rebuilds the app
+   * under its catalog `patch.for` identity (the original app's id and
+   * display name, version forced to 99.99.99) and removes the original.
+   */
+  install(appId: string, opts: {patch?: boolean} = {}): Promise<{jobId: string}> {
+    return this.req('/install', {
+      method: 'POST',
+      body: JSON.stringify(opts.patch ? {appId, patch: true} : {appId}),
+    });
   }
 
   job(id: string): Promise<any> {

@@ -120,7 +120,7 @@ function run(cmd, args, cwd, onLog) {
   });
 }
 
-async function installApp(appId, job) {
+async function installApp(appId, job, opts = {}) {
   const catalog = readCatalog();
   const app = (catalog.apps || []).find((a) => a.id === appId);
   if (!app) {
@@ -135,35 +135,135 @@ async function installApp(appId, job) {
     return;
   }
 
+  // ---- patch install ------------------------------------------------------
+  // A catalog entry with `patch: {for, name}` describes a patched version of
+  // another app. Instead of building itself, the patch is rebuilt under the
+  // ORIGINAL app's identity:
+  //   - app id       → patch.for, so the shell (and the remote's shortcut
+  //                     button) launches the patched app in its place;
+  //   - display name → patch.name, so it shows up as the original app;
+  //   - version      → forced to 99.99.99, ALWAYS, so an official update can
+  //                     never look newer and override the patch.
+  // The original is uninstalled after a successful build and before the
+  // patch is installed.
+  let buildDir = dir;
+  let patch = null;
+  if (opts.patch) {
+    const p = app.patch;
+    if (!p || typeof p.for !== 'string' || !APP_ID_RE.test(p.for)) {
+      job.status = 'error';
+      job.log.push(`Catalog entry ${appId} has no valid patch.for — cannot patch-install.`);
+      return;
+    }
+    const patchName = String(p.name || app.name);
+    if (patchName.includes('"') || patchName.includes('\n') || patchName.length > 64) {
+      job.status = 'error';
+      job.log.push(`patch.name must be ≤64 chars without quotes.`);
+      return;
+    }
+    const origPkg = appId.endsWith('.main') ? appId.slice(0, -5) : appId;
+    const newPkg = p.for.endsWith('.main') ? p.for.slice(0, -5) : p.for;
+    patch = { id: p.for, name: patchName, pkg: newPkg };
+
+    buildDir = path.join(STATE_DIR, 'patch-build', appId.replace(/[^A-Za-z0-9._-]/g, '_'));
+    job.log.push(`Patch install: ${appId} → ${patch.id} ("${patchName}", version 99.99.99)`);
+    fs.rmSync(buildDir, { recursive: true, force: true });
+    fs.mkdirSync(buildDir, { recursive: true });
+    // Copy the project minus node_modules/build artifacts into a scratch dir
+    // (the working tree stays untouched). Dependencies are installed fresh in
+    // the copy — a symlinked node_modules does NOT work: Metro refuses to
+    // resolve "react-native" through it ("could not be found within the
+    // project"), so the patch build does its own npm install below.
+    fs.cpSync(dir, buildDir, {
+      recursive: true,
+      filter: (src) => {
+        const rel = path.relative(dir, src);
+        if (rel === 'node_modules' || rel.startsWith(`node_modules${path.sep}`)) return false;
+        if (rel === 'build' || rel.startsWith(`build${path.sep}`)) return false;
+        if (rel === 'buildinfo.json') return false;
+        return true;
+      },
+    });
+    const rewrite = (file, fn) => {
+      const fp = path.join(buildDir, file);
+      fs.writeFileSync(fp, fn(fs.readFileSync(fp, 'utf8')));
+    };
+    rewrite('manifest.toml', (s) => {
+      // Component id first (it contains the package id as a prefix), then the
+      // package id — skipped if the new component id contains the old package
+      // id, which would make the blanket replace corrupt the target.
+      let out = s.split(appId).join(patch.id);
+      if (!patch.id.includes(origPkg)) out = out.split(origPkg).join(newPkg);
+      return out
+        .replace(/^title = ".*"$/m, `title = "${patchName}"`)
+        .replace(/^version = ".*"$/m, 'version = "99.99.99"');
+    });
+    rewrite('app.json', (s) => {
+      const j = JSON.parse(s);
+      j.name = patch.id;
+      j.displayName = patchName;
+      return `${JSON.stringify(j, null, 2)}\n`;
+    });
+    rewrite('package.json', (s) => {
+      const j = JSON.parse(s);
+      j.version = '99.99.99';
+      return `${JSON.stringify(j, null, 2)}\n`;
+    });
+    job.log.push(`Identity rewritten (${origPkg} → ${newPkg}); building…`);
+  }
+
   job.status = 'building';
-  job.log.push(`Building ${app.name} (${appId})…`);
-  if (!fs.existsSync(path.join(dir, 'node_modules'))) {
-    const rc = await run('npm', ['install', '--no-audit', '--no-fund'], dir, (l) => job.log.push(l));
+  if (!patch) job.log.push(`Building ${app.name} (${appId})…`);
+  if (!fs.existsSync(path.join(buildDir, 'node_modules'))) {
+    if (patch) job.log.push('Installing dependencies in the patch build dir…');
+    const rc = await run('npm', ['install', '--no-audit', '--no-fund'], buildDir, (l) => job.log.push(l));
     if (rc !== 0) {
       job.status = 'error';
       job.log.push('npm install failed');
       return;
     }
   }
-  const brc = await run('npm', ['run', 'build:release'], dir, (l) => job.log.push(l));
+  const brc = await run('npm', ['run', 'build:release'], buildDir, (l) => job.log.push(l));
   if (brc !== 0) {
     job.status = 'error';
-    job.log.push('build failed');
+    job.log.push(patch ? 'patch build failed' : 'build failed');
     return;
   }
 
   job.status = 'installing';
+  if (patch) {
+    // Build first, touch the device second: if the rewrite doesn't compile
+    // the original is still there. Uninstalling is best-effort — a
+    // system-protected original may refuse, in which case we install over it.
+    job.log.push(`Removing the original ${patch.id}…`);
+    const urc = await run('vega', ['device', 'uninstall-app', '--appName', patch.id], HOST_DIR, (l) =>
+      job.log.push(l),
+    );
+    if (urc !== 0) {
+      job.log.push(`Note: could not remove the original (exit ${urc}) — it may be system-protected; installing over it.`);
+    } else {
+      job.log.push(`Removed the original ${patch.id}.`);
+    }
+  }
   job.log.push('Installing on the connected Fire TV…');
-  const irc = await run('vega', ['device', 'install-app', '--dir', '.', '-b', 'Release'], dir, (l) =>
+  const irc = await run('vega', ['device', 'install-app', '--dir', '.', '-b', 'Release'], buildDir, (l) =>
     job.log.push(l),
   );
   if (irc !== 0) {
     job.status = 'error';
-    job.log.push('install failed — is a Fire TV connected? (vega device list)');
+    job.log.push(
+      patch
+        ? `install failed — the original ${patch.id} was already removed; retry or reinstall it.`
+        : 'install failed — is a Fire TV connected? (vega device list)',
+    );
     return;
   }
   job.status = 'done';
-  job.log.push(`Installed ${app.name}. Launch it from your Fire TV app list.`);
+  job.log.push(
+    patch
+      ? `Installed ${app.name} as ${patch.id} — the shell now shows "${patch.name}" (version 99.99.99).`
+      : `Installed ${app.name}. Launch it from your Fire TV app list.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -472,18 +572,27 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const appId = String(body.appId || '');
     if (!appId) return json(res, 400, { error: 'appId required' });
+    const wantPatch = body.patch === true;
+    if (wantPatch) {
+      // Patch installs rewrite the app's identity, so the target comes from
+      // the catalog (which the hub owner controls), never from the request.
+      const entry = (readCatalog().apps || []).find((a) => a.id === appId);
+      if (!entry || !entry.patch || !APP_ID_RE.test(String(entry.patch.for || ''))) {
+        return json(res, 400, { error: 'this app has no patch metadata in the catalog', code: 'no_patch' });
+      }
+    }
     if ([...jobs.values()].some((j) => j.status === 'building' || j.status === 'installing')) {
       return json(res, 429, { error: 'a job is already running' });
     }
     const id = crypto.randomBytes(6).toString('hex');
-    const job = { id, appId, status: 'queued', log: [], createdAt: Date.now() };
+    const job = { id, appId, patch: wantPatch, status: 'queued', log: [], createdAt: Date.now() };
     jobs.set(id, job);
     // keep the log bounded; these get polled by the TV
     const push = (l) => {
       job.log.push(l);
       if (job.log.length > 200) job.log.shift();
     };
-    installApp(appId, job)
+    installApp(appId, job, { patch: wantPatch })
       .catch((e) => {
         job.status = 'error';
         push(`internal error: ${e.message}`);

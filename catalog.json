@@ -14,15 +14,29 @@
       "id": "app.vegatube.main",
       "name": "VegaTube",
       "summary": "Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks.",
-      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega — VegaTube is the FYAISA example app, with hub updates built in.",
+      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega \u2014 VegaTube is the FYAISA example app, with hub updates built in.",
       "path": "apps/vegatube",
+      "patch": {
+        "for": "com.amazon.firetv.youtube.main",
+        "name": "YouTube"
+      },
       "license": "GPL-3.0-only",
       "author": "FYAISA contributors",
       "homepage": "https://github.com/reisxd/TizenTube",
       "minOsVersion": "1.2",
       "targetOsVersion": "1.2",
-      "architectures": ["armv7", "aarch64", "x86_64"],
-      "tags": ["youtube", "adblock", "sponsorblock", "webview", "media"],
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "youtube",
+        "adblock",
+        "sponsorblock",
+        "webview",
+        "media"
+      ],
       "containsAds": false,
       "requiresNetwork": true,
       "drm": true,
