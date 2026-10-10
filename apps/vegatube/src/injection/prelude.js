@@ -1,5 +1,5 @@
 /*
- * VegaTube for Vega OS — injection prelude (formerly TizenTube Vega).
+ * VegaTube for Vega OS: injection prelude (formerly TizenTube Vega).
  *
  * Runs at document-start inside the Vega WebView (plain Chromium), BEFORE the
  * TizenTube userscript and before any YouTube page scripts.
@@ -7,16 +7,16 @@
  * Responsibilities:
  *   1. Seed TizenTube's configuration (localStorage 'ytaf-configuration') with
  *      defaults that are correct for this platform:
- *        - enableUpdater: false  — always forced, not just defaulted: the
- *                                  built-in updater targets TizenTube Cobalt
+ *        - enableUpdater: false, always forced rather than just defaulted.
+ *                                  The built-in updater targets TizenTube Cobalt
  *                                  (wrong platform packages), and its
  *                                  "update available" prompt would fire every
- *                                  launch — the only upstream gate for the
+ *                                  launch; the only upstream gate for the
  *                                  check is the presence of h5vcc.tizentube,
- *                                  which we deliberately provide. (The
+ *                                  which this prelude provides. (The
  *                                  settings-menu Updater section is removed
  *                                  from the vendored script outright.)
- *        - enableFixedUI: true   — upstream defaults this to true on non-Cobalt
+ *        - enableFixedUI: true, upstream defaults it to true on non-Cobalt
  *                                  web engines (the flag re-enables YouTube's
  *                                  animations / long-press on capable engines).
  *      Existing user choices are always preserved (the updater being the
@@ -36,8 +36,8 @@
  *                                  Vega does not expose to apps yet)
  *        - InstallAppFromURL()  -> omitted (see enableUpdater above)
  *
- * Everything TizenTube does in-page — ad blocking, SponsorBlock, DeArrow,
- * speed controls, themes, settings UI — requires no native API and works
+ * Everything TizenTube does in-page (ad blocking, SponsorBlock, DeArrow,
+ * speed controls, themes, settings UI) requires no native API and works
  * unmodified.
  */
 (function () {
@@ -61,7 +61,7 @@
   try {
     var cfg = {};
     try { cfg = JSON.parse(window.localStorage.getItem(CONFIG_KEY) || '{}') || {}; } catch (_) { cfg = {}; }
-    cfg.enableUpdater = false; /* forced every launch — see header note */
+    cfg.enableUpdater = false; /* forced every launch; see header note */
     if (typeof cfg.enableFixedUI === 'undefined') cfg.enableFixedUI = true;
     /* On Tizen/Cobalt the userscript is injected at document-start, so
        ui.js's `reloadHomeOnStartup` -> SOFT_RELOAD_PAGE is a harmless "go to
@@ -73,7 +73,7 @@
     cfg.vegaPlatform = true;
     cfg.vegaAppVersion = APP_VERSION;
     window.localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
-  } catch (e) { /* private mode / storage disabled — userscript falls back to defaults */ }
+  } catch (e) { /* private mode / storage disabled; userscript falls back to defaults */ }
 
   function post(message) {
     try {
@@ -92,10 +92,10 @@
    *     window.__spatialNavigation__.keyMode = 'NONE';
    *
    * inside execute_once_dom_loaded(). That API is a Cobalt/Tizen builtin and
-   * does NOT exist in the Vega WebView's plain Chromium, so the assignment
-   * throws a TypeError there. Everything after it in that function is skipped —
+   * does not exist in the Vega WebView's plain Chromium, so the assignment
+   * throws a TypeError there. Everything after it in that function is skipped,
    * including TizenTube's own key handlers and its "go home on startup"
-   * navigation. Observed symptoms on a real Fire TV Stick HD: the remote's Back
+   * navigation. Symptoms: the remote's Back
    * button did nothing and the app opened on Shorts instead of Home.
    *
    * The throw is asynchronous (~250ms after DOM load), which is why it never

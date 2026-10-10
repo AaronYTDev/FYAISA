@@ -7,7 +7,7 @@
  * controls, theming) at document-start via a small native-bridge shim.
  *
  * VegaTube is the FYAISA example app: it demonstrates how a homebrew Vega app
- * uses the FYAISA bridge (`fyaisa connect`) — the startup menu checks the hub
+ * uses the FYAISA bridge (`fyaisa connect`); the startup menu checks the hub
  * for new versions and can rebuild + reinstall itself on the Fire TV over
  * ElevSH, the PC connection FYAISA manages. See src/fyaisaClient.ts and
  * docs/HOMEBREW.md §6.
@@ -49,7 +49,7 @@ import {
 /**
  * YouTube for TVs decides between its mobile/desktop/TV experiences from the
  * User-Agent. The Vega WebView's stock Chromium UA would get the wrong client,
- * so we present as the official YouTube for Android TV app — the exact same
+ * so we present as the official YouTube for Android TV app, the exact same
  * UA string TizenTube Cobalt uses (see mods/features/userAgentSpoofing.js
  * upstream, including its `com.google.android.youtube.tv` aux field).
  */
@@ -63,7 +63,7 @@ const YOUTUBE_TV_URL = 'https://www.youtube.com/tv';
 
 // --- FYAISA integration (see docs/HOMEBREW.md §6) ---------------------------
 const BRIDGE_PORT = 47821;
-/** Our hub id — the bridge rebuilds + reinstalls this app from the catalog. */
+/** Our hub id; the bridge rebuilds + reinstalls this app from the catalog. */
 const VEGATUBE_APP_ID = 'app.vegatube.main';
 /** Published catalog; used for the update check (no pairing required). */
 const HUB_CATALOG_URL =
@@ -86,11 +86,10 @@ const RETRY_BASE_DELAY_MS = 1500;
 const MAIN_FRAME_PATHS = ['/', '/tv'];
 
 /**
- * The Vega WebView bridge silently DROPS oversized injectJavaScript payloads.
- * Verified on a real Fire TV Stick HD (OS 2.0): a ~150 byte probe round-tripped
- * through postMessage, while the 630 KB TizenTube bundle was accepted without
- * error and then never executed — which is why no ad block and no settings
- * category ever appeared.
+ * The Vega WebView bridge silently drops oversized injectJavaScript payloads:
+ * a ~150 byte probe round-tripped through postMessage, while the 630 KB
+ * TizenTube bundle was accepted without error and then never executed, which
+ * is why no ad block and no settings category ever appeared.
  *
  * So we ship the script in small chunks that the page reassembles itself. Each
  * chunk is self-contained and order-independent: it stores its slice under an
@@ -123,12 +122,11 @@ const buildChunkScript = (index: number): string =>
 /**
  * Assembles the stored slices and executes them, trying every viable strategy.
  *
- * YouTube's page defends against injected script in two independent ways, both
- * confirmed on-device:
- *   1. Trusted Types — `eval('...')` throws
+ * YouTube's page defends against injected script in two independent ways:
+ *   1. Trusted Types: `eval('...')` throws
  *      "Evaluating a string as JavaScript violates this document's Trusted Type
  *       assignment requirements."
- *   2. CSP `script-src-elem` — inserting an inline <script> fires a
+ *   2. CSP `script-src-elem`: inserting an inline <script> fires a
  *      `securitypolicyviolation` and never executes.
  *
  * The gap between them is that Chrome accepts a *TrustedScript* in eval() when
@@ -217,7 +215,7 @@ const buildTriggerScript = (total: number): string => `
  *
  * Primary path asks YouTube's own command executor to run POPUP_BACK, which is
  * exactly how TizenTube itself navigates back (resolveCommand's signalAction
- * cases) — so YouTube closes overlays/menus/players through its normal path.
+ * cases), so YouTube closes overlays/menus/players through its normal path.
  * If the executor is not reachable we dispatch a bubbling Escape keydown,
  * which YouTube TV also treats as Back.
  */
@@ -271,7 +269,7 @@ const BACK_SCRIPT = `
 
 const isMainFrameUrl = (url?: string): boolean => {
   if (!url) {
-    // No URL reported — treat as a main-frame failure.
+    // No URL reported; treat as a main-frame failure.
     return true;
   }
   try {
@@ -285,13 +283,13 @@ const isMainFrameUrl = (url?: string): boolean => {
 
 // --- ElevSH pairing persistence (KeplerFileSystem; /data is per-app) --------
 /** token is optional: the host is remembered after first typing, even while
- *  waiting for FYAISA to Allow this app — the token arrives on auto-pair. */
+ *  waiting for FYAISA to Allow this app; the token arrives on auto-pair. */
 type SavedPair = {host: string; token?: string};
 
 const savePair = async (p: SavedPair) => {
   try {
-    // writeStringToFile fails with AlreadyExistsError if the file is there —
-    // remove first (the pairing file is tiny; atomicity doesn't matter).
+    // writeStringToFile fails with AlreadyExistsError if the file is there,
+    // so remove first (the pairing file is tiny; atomicity doesn't matter).
     await KeplerFileSystem.removeFile(STORE_PATH).catch(() => {});
     await KeplerFileSystem.writeStringToFile(STORE_PATH, JSON.stringify(p), 'UTF-8');
     console.info(`[VegaTube] ElevSH pairing saved (${p.host}${p.token ? '' : ', host only'})`);
@@ -462,7 +460,7 @@ export const App = () => {
     };
   }, []);
 
-  // The menu is a startup convenience, not a lockout — it steps aside on its
+  // The menu is a startup convenience, not a lockout; it steps aside on its
   // own so YouTube is one press (or zero) away.
   useEffect(() => {
     if (menu !== 'menu' || pairCode) {
@@ -491,7 +489,7 @@ export const App = () => {
 
   /**
    * Receive diagnostics from the injected prelude (window.ReactNativeWebView).
-   * These are the only in-page signals that reach native logs — the WebView's
+   * These are the only in-page signals that reach native logs; the WebView's
    * own console output is not forwarded to the device log, so this bridge is
    * the sole way to confirm the injection actually executed.
    */
@@ -524,9 +522,9 @@ export const App = () => {
    * Inject the TizenTube prelude + userscript into the loaded page.
    *
    * `injectedJavaScriptBeforeContentLoaded` is declared by the Vega WebView
-   * types but is NOT implemented natively on OS 2.0 — verified on a real Fire
-   * TV Stick HD: the page loaded and played fine, yet nothing the script
-   * defined ever existed (no h5vcc bridge, no ad block, no settings category).
+   * types but is not implemented natively on OS 2.0: the page loaded and
+   * played fine, yet nothing the script defined ever existed (no h5vcc
+   * bridge, no ad block, no settings category).
    * The supported API is the imperative `injectJavaScript`, so we use that on
    * every page load. The prelude sets a `window.__VEGATUBE__` sentinel,
    * so re-running it (and the before-content-loaded prop, if a future OS
@@ -584,7 +582,7 @@ export const App = () => {
    * Shared failure handler: auto-reload with a short backoff while we still
    * have retries left, otherwise surface the manual error screen.
    *
-   * Only ever call this for MAIN-FRAME failures — see onError.
+   * Only ever call this for MAIN-FRAME failures; see onError.
    */
   const handleFailure = useCallback(
     (reason: string) => {
@@ -803,9 +801,9 @@ export const App = () => {
         javaScriptEnabled
         domStorageEnabled
         // Intentionally OFF. With it enabled the OS 2.0 WebView delivers keys
-        // only to the page and drops Back on the floor — verified on a real
-        // Fire TV Stick HD: 163 arrow presses and 15 Enters reached the page,
-        // zero Back presses did, across repeated attempts. Arrows/Enter still
+        // only to the page and drops Back entirely: 163 arrow presses and 15
+        // Enters reached the page, zero Back presses did, across repeated
+        // attempts. Arrows/Enter still
         // arrive with it off; Back is caught natively and forwarded via
         // BACK_SCRIPT. See the BackHandler effect above.
         allowSystemKeyEvents={false}

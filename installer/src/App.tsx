@@ -1,15 +1,9 @@
 /**
- * FYAISA — homebrew hub for Amazon Vega OS Fire TV devices.
+ * FYAISA: homebrew hub for Amazon Vega OS Fire TV devices.
  *
  * Fetches the hub catalog from GitHub and renders it as a 10-foot-friendly app
- * browser.
- *
- * IMPORTANT PLATFORM CONSTRAINT: a Vega OS app cannot install other .vpkg
- * packages. Package management is host-side only (`vega device install-app`) and
- * no third-party install API is exposed to apps. This app therefore browses the
- * catalog and hands the actual install back to the host `fyaisa` CLI, which
- * ships in the same repository. That is a platform limitation, not a missing
- * feature — see apps/README.md.
+ * browser. Apps can't install packages on Vega OS, so installs get handed back
+ * to the `fyaisa` CLI in this repository (see apps/README.md).
  */
 import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -54,28 +48,27 @@ type Catalog = { hub?: {name?: string; tagline?: string}; apps?: HubApp[] };
 /* ---------------------------------------------------------------------------
  * Bridge pairing.
  *
- * A Vega OS app cannot install packages, so control is inverted: this app is a
- * client for the ElevSH bridge (`fyaisa connect`) running on the user's
- * computer. It can make outbound HTTP, which is all we need. ElevSH is also
- * the consent hub: other apps' pairing requests show up here to Allow/Deny.
+ * This app is a client for the ElevSH bridge (`fyaisa connect`) running on the
+ * user's computer: the TV can't install packages, so the PC does it. ElevSH is
+ * also where other apps' pairing requests show up to Allow/Deny.
  * ------------------------------------------------------------------------- */
 const BRIDGE_PORT = 47821;
 const PAIR_POLL_MS = 2000;
-/** This app's id — sent as X-FYAISA-App; the bridge treats us as the owner. */
+/** This app's id, sent as X-FYAISA-App; the bridge treats us as the owner. */
 const HUB_APP_ID = 'app.fyaisa.hub.main';
 /**
  * Persisted pairing, so the TV doesn't forget its ElevSH host on every restart.
  *
- * Storage notes (learned the hard way):
+ * Storage notes:
  *  - AsyncStorage is NOT available on Vega OS: installing it succeeds at
  *    build time, but at runtime the JS bridge reports
  *      [AutoLinkService] Library 'RNAsyncStorage' not found in any source
  *    and every call silently no-ops. Use Amazon's KeplerFileSystem
  *    TurboModule instead.
  *  - The app runs sandboxed: its writable, reboot-persistent directory is
- *    /data (per-app, not shared — the KeplerFileSystem README documents the
+ *    /data (per-app, not shared; the KeplerFileSystem README documents the
  *    full sandbox layout: /pkg read-only, /data persistent, /tmp volatile).
- *    It is NOT the /data that `vega device run-cmd` sees.
+ *    It is not the /data that `vega device run-cmd` sees.
  *  - The encoding argument must be 'UTF-8' (uppercase); 'utf-8' makes the
  *    native side throw com.amazon.kepler.io.IoError.
  */
@@ -85,8 +78,8 @@ const STORE_PATH = '/data/bridge.json';
 
 const savePair = async (p: SavedPair) => {
   try {
-    // writeStringToFile fails with AlreadyExistsError if the file is there —
-    // remove first (the pairing file is tiny; atomicity doesn't matter).
+    // writeStringToFile fails with AlreadyExistsError if the file is there,
+    // so remove first (the pairing file is tiny; atomicity doesn't matter).
     await KeplerFileSystem.removeFile(STORE_PATH).catch(() => {});
     await KeplerFileSystem.writeStringToFile(STORE_PATH, JSON.stringify(p), 'UTF-8');
     console.info(`[FYAISA] pairing saved to ${STORE_PATH}`);
@@ -118,7 +111,7 @@ const clearPair = async () => {
     await KeplerFileSystem.removeFile(STORE_PATH);
     console.info(`[FYAISA] pairing cleared (${STORE_PATH})`);
   } catch {
-    // Missing file is fine — nothing to forget.
+    // Missing file is fine; nothing to forget.
   }
 };
 
@@ -163,7 +156,7 @@ const statusColor = (s?: string) =>
   s === 'stable' ? '#4caf50' : s === 'beta' ? '#ffb300' : '#9e9e9e';
 
 /**
- * Ask ElevSH what it can do — CLI version + how many Fire TVs it sees.
+ * Ask ElevSH what it can do: CLI version + how many Fire TVs it sees.
  * This goes through the bridge's /vega endpoint, which runs allowlisted `vega`
  * commands on the PC on our behalf.
  */
@@ -183,8 +176,8 @@ const describePc = async (fy: Fyaisa): Promise<string> => {
 
 /**
  * Wrap a base style so a Pressable renders the TV focus ring (styles.focused)
- * when D-pad focused. Every focusable in the app goes through this — an
- * unfocused-vs-focused difference you can actually see from the couch.
+ * when D-pad focused. Every focusable in the app goes through this, so focus
+ * is actually visible from the couch.
  */
 const focusable = (base: any) => ({focused}: {focused: boolean}) =>
   [base, focused && styles.focused];
@@ -212,14 +205,13 @@ export const App = () => {
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
-  // Restore a previous pairing on launch. React state alone is lost on every
-  // app restart, which made the Install button disappear after a reboot even
-  // though ElevSH was still paired.
+  // Restore a previous pairing on launch; React state alone is lost on every
+  // app restart.
   //
-  // We then verify the saved token against the bridge: GET /catalog requires
+  // Verify the saved token against the bridge: GET /catalog requires
   // X-FYAISA-Token, so a 401 means the bridge regenerated its token (e.g.
   // ~/.fyaisa/bridge.json was deleted) and we must re-pair. A network error
-  // just means ElevSH is offline — keep the pairing; it works again when the
+  // just means ElevSH is offline; keep the pairing, it works again when the
   // computer is back on the same network.
   useEffect(() => {
     let cancelled = false;
@@ -257,7 +249,7 @@ export const App = () => {
             }));
           }
         } else {
-          // ElevSH unreachable right now — stay paired; it may come back when
+          // ElevSH unreachable right now; stay paired, it may come back when
           // the computer is on the same network again.
           console.info('[FYAISA] bridge unreachable during restore check (ElevSH offline?)');
           if (!cancelled) {
@@ -308,7 +300,7 @@ export const App = () => {
           setPairReqs(pr.pairings || []);
         }
       } catch {
-        // Bridge offline — keep the last snapshot; the status line says so.
+        // Bridge offline; keep the last snapshot, the status line says so.
       }
     };
     refresh();
@@ -327,12 +319,10 @@ export const App = () => {
     }
     try {
       setPair(p => ({...p, status: 'requesting', message: 'Requesting code…'}));
-      // Reachability check — deliberately GET /ping, which is tokenless. This
-      // used to call /catalog, a token-protected endpoint: it answered 401
-      // "unauthorized — pair first" precisely when no valid token existed yet,
-      // so pairing could never bootstrap itself and no code was ever issued.
-      // A stale token heals itself below: /pair/request and /pair/approve are
-      // tokenless, and /pair/approve hands back the bridge's current token.
+      // Reachability check: GET /ping, which is tokenless. /catalog would 401
+      // here since no valid token exists yet, so pairing could never start.
+      // /pair/request and /pair/approve are tokenless too, and /pair/approve
+      // hands back the bridge's current token, so a stale token heals itself.
       try {
         const res = await fetch(`${base}/ping`);
         if (!res.ok) {
@@ -452,7 +442,7 @@ export const App = () => {
     [bridgeFetch],
   );
 
-  // The splash screen is dismissed exactly once, by the first fetch — loadCatalog
+  // The splash screen is dismissed exactly once, by the first fetch; loadCatalog
   // is also re-run by the manual Refresh button and must not touch it again.
   const splashHiddenRef = useRef(false);
 
@@ -499,9 +489,9 @@ export const App = () => {
 
   // Remote navigation is handled natively: Pressable rows take D-pad focus
   // (the first row seeded with hasTVPreferredFocus), and Back is caught through
-  // BackHandler. Do NOT reach for document/window here — this is a native
-  // React Native for Vega app, not a WebView, so those do not exist (using them
-  // crashed the app with "ReferenceError: Property 'document' doesn't exist").
+  // BackHandler. document/window don't exist here; this is a native React
+  // Native for Vega app, not a WebView (touching them crashes with
+  // "ReferenceError: Property 'document' doesn't exist").
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (selectedId === null) return false; // main menu → let the OS close us
@@ -836,8 +826,8 @@ export const App = () => {
             </Text>
           ) : null}
 
-          {/* Refresh: re-runs the exact fetch the app does on launch — the live
-              catalog from the repo (same source `fyaisa` prints on the PC),
+          {/* Refresh: re-runs the exact fetch the app does on launch (the live
+              catalog from the repo, same source `fyaisa` prints on the PC),
               falling back to the built-in list if GitHub is unreachable. */}
           <Pressable
             focusable
@@ -846,7 +836,7 @@ export const App = () => {
             <View style={styles.rowMain}>
               <Text style={styles.rowTitle}>Refresh</Text>
               <Text style={styles.rowSummary} numberOfLines={2}>
-                Re-fetch the app list from GitHub — the same catalog `fyaisa` prints on
+                Re-fetch the app list from GitHub (the same catalog `fyaisa` prints on
                 your PC
               </Text>
             </View>
@@ -1035,10 +1025,10 @@ const styles = StyleSheet.create({
   },
   accessBtnText: {color: '#fff', fontSize: 15, fontWeight: '600'},
   /**
-   * The TV focus ring. Without it the selected control is nearly invisible on
-   * this dark UI — every focusable appends this when focused, giving a thick
-   * amber border plus a glow. Bases above carry a transparent 4px border so
-   * focusing never shifts layout.
+   * The TV focus ring: a thick amber border plus a glow, appended by every
+   * focusable when focused (without it the selected control is hard to see on
+   * this dark UI). Bases above carry a transparent 4px border so focusing
+   * never shifts layout.
    */
   focused: {
     borderColor: '#ffb02e',

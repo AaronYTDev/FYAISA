@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# fyaisa — FYAISA hub client
+# fyaisa: FYAISA hub client
 #
 # Lists, builds and installs homebrew from the FYAISA catalog onto Vega OS
 # Fire TV devices.

@@ -113,7 +113,7 @@ const looksBinary = (s: string): boolean => {
 /**
  * Parse `ls -la <dir>` output from the device.
  *
- * Device format (verified on a Fire TV Stick HD):
+ * Device format:
  *   -rw-rw-rw-  1 app_user app_user 500660 2026-10-10 00:59 name...
  *   d?????????  ? ?        ?             ?                ? name...   (not stat-able)
  * i.e. seven whitespace-separated fields then the name — the date is ISO

@@ -1,16 +1,15 @@
-# fyaisa-bridge — the ElevSH bridge
+# fyaisa-bridge (ElevSH)
 
-The PC side of `fyaisa connect`, aka **ElevSH**. Lets the **FYAISA app on your
-Fire TV** queue builds and installs on your computer, and decides which other
-homebrew apps may use that connection (allow/deny from the TV).
+The PC side of `fyaisa connect`, also called ElevSH. It lets the FYAISA app
+on your Fire TV queue builds and installs on your computer, and it decides
+which other homebrew apps may use that connection (allow/deny from the TV).
 
 ## Why it exists
 
-A Vega OS app cannot install other `.vpkg` packages — package management is
-host-side only (`vega device install-app`), and no third-party install API is
-exposed to apps. But a Vega app *can* make outbound HTTP requests.
-
-So the direction of control is inverted:
+A Vega OS app cannot install other `.vpkg` packages: package management is
+host-side only (`vega device install-app`) and no third-party install API is
+exposed to apps. A Vega app can make outbound HTTP requests though, so
+control runs the other way:
 
 ```
 Fire TV (FYAISA app)  ──HTTP──▶  bridge on your PC  ──▶  npm build + vega install
@@ -18,8 +17,8 @@ Fire TV (FYAISA app)  ──HTTP──▶  bridge on your PC  ──▶  npm bui
         └──── polls job status ────────┘
 ```
 
-The bridge holds the device connection and the build/install powers. The TV app
-is a remote control for it.
+The bridge holds the device connection and does the building and
+installing; the TV app drives it.
 
 ## Run it
 
@@ -46,7 +45,7 @@ fyaisa approve <6-digit-code>
 
 or on the TV in **FYAISA → ElevSH** (the request shows up there). Once an app
 has been allowed in FYAISA, later pairings from that app on the Fire TV are
-auto-approved by the bridge — see “ElevSH access control” below.
+auto-approved by the bridge; see "ElevSH access control" below.
 
 Options:
 
@@ -67,15 +66,15 @@ Options:
 | `POST` | `/pair/approve` | no | exchange code → token (also allows that app's ElevSH access) |
 | `GET` | `/access/status?appId=` | no | has this app been allowed/denied yet? |
 | `GET` | `/catalog` | token | current catalog |
-| `POST` | `/install` | token | `{appId}` → `{jobId}`, builds + installs. Add `patch: true` for a **patch install**: the app is rebuilt under its catalog `patch.for` identity (original's app id + display name, version forced to `99.99.99`), the original app is uninstalled first — see §"Patch installs" in [`docs/HOMEBREW.md`](../docs/HOMEBREW.md) |
+| `POST` | `/install` | token | `{appId}` → `{jobId}`, builds + installs. Add `patch: true` for a patch install: the app is rebuilt under its catalog `patch.for` identity (original's app id + display name, version forced to `99.99.99`), the original app is uninstalled first; see "Patch installs" in [`docs/HOMEBREW.md`](../docs/HOMEBREW.md) |
 | `GET` | `/job?id=` | token | job status + build log |
 | `GET` | `/jobs` | token | all jobs |
 | `GET` | `/pair/pending` | token (FYAISA) | app pairing requests waiting for a decision |
 | `GET` | `/access` | token (FYAISA) | the allow/deny list: `[{appId, status}]` |
 | `POST` | `/access` | token (FYAISA) | `{appId, decision: allow \| deny \| revoke}` |
 | `POST` | `/launch` | token | `{appId}` launch an app on the device |
-| `POST` | `/vega` | token | run an **allowlisted** `vega` CLI command on the PC |
-| `POST` | `/shutdown` | token (hub/host tools) | stop the bridge — what `fyaisa disconnect` calls |
+| `POST` | `/vega` | token | run an allowlisted `vega` CLI command on the PC |
+| `POST` | `/shutdown` | token (hub/host tools) | stop the bridge, what `fyaisa disconnect` calls |
 
 Auth is `X-FYAISA-Token: <token>` compared with `crypto.timingSafeEqual`.
 
@@ -84,23 +83,24 @@ Auth is `X-FYAISA-Token: <token>` compared with `crypto.timingSafeEqual`.
 Requests that carry an `X-FYAISA-App: <app-id>` header are additionally gated
 per app id (`app.<name>.main`-style ids):
 
-- `app.fyaisa.hub.main` (FYAISA, the owner) is always allowed — and its
-  requests teach the bridge the Fire TV's address, which auto-approvals are
+- `app.fyaisa.hub.main` (FYAISA, the owner) is always allowed, and its
+  requests teach the bridge the Fire TV's address that auto-approvals are
   pinned to.
 - Any other app id needs an explicit decision on the **FYAISA → ElevSH**
   screen: unknown ids become `pending` and get `403 access_required`;
   denied ids get `403 access_denied`. All state persists in
   `~/.fyaisa/bridge.json` under `access`.
-- An **allowed** app that pairs from the Fire TV's own address (fresh, within
-  72 h) is auto-approved — that's what makes app self-setup seamless.
+- An allowed app that pairs from the Fire TV's own address (fresh, within
+  72 h) is auto-approved, so an app can finish setting itself up without the
+  user touching the PC again.
 - Requests without an app header (host tools, `curl`) are token-only, as
   before; the token is still the real security boundary.
 
 ## Running the Vega CLI from an app (`POST /vega`)
 
-Any paired homebrew app can reach the Vega CLI on the PC — device list, launch,
-terminate, `exec vda connect`, `run-cmd`, … — through the same pairing it
-already has:
+Any paired homebrew app can reach the Vega CLI on the PC (device list,
+launch, terminate, `exec vda connect`, `run-cmd`, …) through the same
+pairing it already has:
 
 ```bash
 curl -X POST http://<pc>:47821/vega -H "X-FYAISA-Token: $TOKEN" \
@@ -111,28 +111,28 @@ curl -X POST http://<pc>:47821/vega -H "X-FYAISA-Token: $TOKEN" \
 Body: `{args: string[], timeoutMs?: number}` (default 30 s, max 120 s).
 Response: `{ok, exitCode, stdout, stderr, truncated, durationMs}`.
 
-This is **not** a generic shell, by design:
+This isn't a shell:
 
-- Only `vega` is spawned, with an argument array — never through a shell.
+- Only `vega` is spawned, with an argument array, never through a shell.
 - The leading args must match an allowlist: `--version`, `device …`,
   `platform …`, `exec vda …`, `virtual-device …`. Anything else gets `403`.
-- Every argument must match `[A-Za-z0-9 ._/:=,@+-]+` — no `; | & $ ( ) < >` etc.
+- Every argument must match `[A-Za-z0-9 ._/:=,@+-]+` (no `; | & $ ( ) < >`).
 - Output is capped at 256 KB per stream, max 4 concurrent calls (then `429`),
   and the process is killed at the timeout (then `504` with partial output).
 
-The easiest way to use it is the vendored client — see
+The easiest way to use it is the vendored client; see
 [`client/fyaisaClient.ts`](client/fyaisaClient.ts) and the
-“Access the Vega CLI from your app” section of [`docs/HOMEBREW.md`](../docs/HOMEBREW.md).
+"Access the Vega CLI from your app" section of [`docs/HOMEBREW.md`](../docs/HOMEBREW.md).
 
 ## Security notes
 
-- Default bind is **localhost**; `--lan` is required for the TV to connect.
+- Default bind is localhost; `--lan` is required for the TV to connect.
 - Nothing is accepted before a pairing code is approved on the PC.
 - Token lives in `~/.fyaisa/bridge.json` (mode `0600`) and is never logged.
 - One job at a time; concurrent requests get `429`.
-- The bridge shells out to `npm` and `vega` with **no extra sandboxing** — treat
-  it like any dev tool and don't expose it to the open internet unless you
-  understand the risk. LAN use is the intended mode.
+- The bridge shells out to `npm` and `vega` with no extra sandboxing, so
+  treat it like any dev tool and don't expose it to the open internet unless
+  you understand the risk. LAN use is the intended mode.
 
 ## Requirements
 

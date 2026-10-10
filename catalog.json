@@ -14,7 +14,7 @@
       "id": "app.vegatube.main",
       "name": "VegaTube",
       "summary": "Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks.",
-      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega \u2014 VegaTube is the FYAISA example app, with hub updates built in.",
+      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega; VegaTube is the FYAISA example app, with hub updates built in.",
       "path": "apps/vegatube",
       "patch": {
         "for": "com.amazon.firetv.youtube.main",
@@ -58,7 +58,7 @@
       "id": "app.fyaisa.files.main",
       "name": "ElevSH Files",
       "summary": "Browse your Fire TV's real filesystem with the D-pad, over ElevSH.",
-      "description": "The app itself is sandboxed, so it reaches the real device filesystem the long way round: every directory listing and file preview is a `vega device run-cmd` on your paired PC, sent through the bridge's allowlisted /vega endpoint (no shell on the PC, output capped, timeout enforced). Pair once, then navigate /var, /data and the rest with nothing but the remote.",
+      "description": "The app itself is sandboxed, so it reaches the real device filesystem indirectly: every directory listing and file preview is a `vega device run-cmd` on your paired PC, sent through the bridge's allowlisted /vega endpoint (no shell on the PC, output capped, timeout enforced). Pair once, then browse /var, /data and the rest with the remote.",
       "path": "apps/fileexplorer",
       "license": "GPL-3.0-only",
       "author": "AaronYTDev",
@@ -88,7 +88,7 @@
         "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/fileexplorer with the Vega SDK."
       },
       "notes": [
-        "Pairs with ElevSH like every FYAISA app \u2014 approve it in FYAISA \u2192 ElevSH or with `fyaisa approve <code>`.",
+        "Pairs with ElevSH like every FYAISA app; approve it in FYAISA \u2192 ElevSH or with `fyaisa approve <code>`.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     }

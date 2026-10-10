@@ -1,6 +1,6 @@
 # FYAISA app (on-device)
 
-The catalog browser that runs **on the Fire TV**. Part of the
+The catalog browser that runs on the Fire TV. Part of the
 [FYAISA](../) hub.
 
 ## What it does
@@ -13,8 +13,8 @@ The catalog browser that runs **on the Fire TV**. Part of the
 
 ## What it cannot do
 
-**It cannot install apps.** Vega OS exposes no package-install API to
-third-party apps; package management is a host-side operation
+Vega OS exposes no package-install API to third-party apps; package
+management is a host-side operation
 (`vega device install-app`). So the detail screen tells you what to run on your
 computer instead:
 
@@ -49,15 +49,15 @@ See `../bridge/README.md` for the API and security model.
 
 ## Notes for developers
 
-- This is a **native React Native for Vega** app, not a WebView app. There is
-  no `document` or `window` — using them throws
-  `ReferenceError: Property 'document' doesn't exist`. (That bug shipped in v1.0.0
-  and force-killed the app on first launch.)
+- This is a native React Native for Vega app, not a WebView app. There is
+  no `document` or `window`; using them throws
+  `ReferenceError: Property 'document' doesn't exist`. (It shipped that way in
+  v1.0.0 and force-killed the app on first launch.)
 - Remote navigation is native: `Pressable` rows take D-pad focus, the first row
   is seeded with `hasTVPreferredFocus`, and Back is handled with `BackHandler`.
   No manual key listeners.
-- Import `Pressable` from `@amazon-devices/react-native-kepler`, **not**
-  `react-native` — the Vega version types its style callback as
+- Import `Pressable` from `@amazon-devices/react-native-kepler`, not
+  `react-native`; the Vega version types its style callback as
   `{focused}`, and only the Kepler build carries the `hasTVPreferredFocus` prop.
   Importing RN's version silently drops TV focus behaviour.
 - `BackHandler.addEventListener` takes `'hardwareBackPress'` on Vega (not RN's

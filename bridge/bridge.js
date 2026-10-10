@@ -1,31 +1,31 @@
 #!/usr/bin/env node
 /**
- * fyaisa-bridge — the PC side of `fyaisa connect` (the ElevSH bridge).
+ * fyaisa-bridge: the PC side of `fyaisa connect` (the ElevSH bridge).
  *
- * A Vega OS app cannot install packages (no install API), so the Fire TV cannot
- * push .vpkg files to itself. What it *can* do is make outbound HTTP requests.
- * So the direction of control is inverted:
+ * A Vega OS app cannot install packages (no install API), so the Fire TV
+ * cannot push .vpkg files to itself; it can make outbound HTTP requests
+ * though, so control runs the other way:
  *
  *      Fire TV (FYAISA app)  --HTTP-->  this bridge on your PC  --> vega CLI
  *
- * The bridge holds the device connection and the build/install powers. The TV
- * app polls it for a pairing code and for jobs, and posts "install this app"
- * requests. The bridge authenticates with a shared token, so a random device on
- * the same Wi-Fi cannot install anything.
+ * The bridge holds the device connection and does the building and
+ * installing. The TV app polls it for a pairing code and for jobs, and posts
+ * "install this app" requests. Every request needs the shared token, so a
+ * random device on the same Wi-Fi cannot install anything.
  *
  * Security model:
  *   - Binds to LAN (127.0.0.1 by default; 0.0.0.0 with --lan).
  *   - A 6-digit pairing code must be exchanged before any job is accepted.
  *   - After pairing, every request needs `X-FYAISA-Token`.
  *   - Tokens are random, stored in the state file, and never logged.
- *   - POST /shutdown stops the bridge (token + hub/host tools only) — this is
+ *   - POST /shutdown stops the bridge (token + hub/host tools only); this is
  *     what `fyaisa disconnect` calls.
  *   - Apps that identify themselves with `X-FYAISA-App: <app-id>` are gated:
  *     FYAISA (the owner app) allows or denies each app id from the ElevSH
  *     screen; unknown ids get a pending 403 until approved. Requests without
  *     an app header (host tools, curl) are token-only, as before.
  *
- * Plain HTTP is deliberate: this is a short-lived LAN tool. Use `fyaisa connect
+ * Plain HTTP, because this is a short-lived LAN tool. Use `fyaisa connect
  * --tunnel` to wrap it in a public HTTPS tunnel if you need internet access
  * (see the script for caveats).
  */
@@ -142,7 +142,7 @@ async function installApp(appId, job, opts = {}) {
   //   - app id       → patch.for, so the shell (and the remote's shortcut
   //                     button) launches the patched app in its place;
   //   - display name → patch.name, so it shows up as the original app;
-  //   - version      → forced to 99.99.99, ALWAYS, so an official update can
+  //   - version      → forced to 99.99.99, always, so an official update can
   //                     never look newer and override the patch.
   // The original is uninstalled after a successful build and before the
   // patch is installed.
@@ -171,7 +171,7 @@ async function installApp(appId, job, opts = {}) {
     fs.mkdirSync(buildDir, { recursive: true });
     // Copy the project minus node_modules/build artifacts into a scratch dir
     // (the working tree stays untouched). Dependencies are installed fresh in
-    // the copy — a symlinked node_modules does NOT work: Metro refuses to
+    // the copy, since a symlinked node_modules does not work: Metro refuses to
     // resolve "react-native" through it ("could not be found within the
     // project"), so the patch build does its own npm install below.
     fs.cpSync(dir, buildDir, {
@@ -190,7 +190,7 @@ async function installApp(appId, job, opts = {}) {
     };
     rewrite('manifest.toml', (s) => {
       // Component id first (it contains the package id as a prefix), then the
-      // package id — skipped if the new component id contains the old package
+      // package id; skipped if the new component id contains the old package
       // id, which would make the blanket replace corrupt the target.
       let out = s.split(appId).join(patch.id);
       if (!patch.id.includes(origPkg)) out = out.split(origPkg).join(newPkg);
@@ -233,7 +233,7 @@ async function installApp(appId, job, opts = {}) {
   job.status = 'installing';
   if (patch) {
     // Build first, touch the device second: if the rewrite doesn't compile
-    // the original is still there. Uninstalling is best-effort — a
+    // the original is still there. Uninstalling is best-effort; a
     // system-protected original may refuse, in which case we install over it.
     job.log.push(`Removing the original ${patch.id}…`);
     const urc = await run('vega', ['device', 'uninstall-app', '--appName', patch.id], HOST_DIR, (l) =>
@@ -267,11 +267,11 @@ async function installApp(appId, job, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// /vega — run an allowlisted `vega` CLI command on this PC on behalf of a
+// /vega: run an allowlisted `vega` CLI command on this PC on behalf of a
 // paired app. Homebrew apps use this to reach the Vega CLI through the same
 // pairing they already have (device list, launch, run-cmd, …).
 //
-// Deliberately NOT a generic shell:
+// Not a generic shell:
 //   - `vega` only, spawned with an args array (no shell, so no metacharacters).
 //   - The leading args must match an allowlist (device/platform/exec vda/…).
 //   - Every arg must match a strict character whitelist.
@@ -289,7 +289,7 @@ function vegaArgsAllowed(argv) {
   const [root, sub] = argv;
   if (root === '--version') return argv.length === 1;
   if (!VEGA_ROOTS.has(root)) return false;
-  if (root === 'exec' && sub !== 'vda') return false; // `vega exec <sdk-tool>` — only vda
+  if (root === 'exec' && sub !== 'vda') return false; // `vega exec <sdk-tool>`, only vda
   return true;
 }
 
@@ -504,7 +504,7 @@ const server = http.createServer(async (req, res) => {
     if (!p || Date.now() > p.expires) return json(res, 404, { ok: false, error: 'unknown/expired code' });
     p.approved = true;
     if (p.appId && p.appId !== OWNER_APP) {
-      // Approving an app's pairing IS allowing its ElevSH access.
+      // Approving a pairing and allowing the app's ElevSH access are the same thing.
       STATE.access[p.appId] = 'allow';
       log(`ElevSH access allow for ${p.appId} (via pairing approval)`);
     }
@@ -513,8 +513,8 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ok: true, token: STATE.token });
   }
 
-  // App access status — deliberately tokenless: an app asks this BEFORE it
-  // has a pairing ("has the user allowed me yet?").
+  // App access status, tokenless: an app asks this before it even has a
+  // pairing ("has the user allowed me yet?").
   if (path_ === '/access/status' && req.method === 'GET') {
     const appId = url.searchParams.get('appId') || '';
     if (!APP_ID_RE.test(appId)) return json(res, 400, { error: 'bad appId', code: 'bad_app_id' });
@@ -529,7 +529,7 @@ const server = http.createServer(async (req, res) => {
 
   // Stop the bridge (`fyaisa disconnect`). Same token as every other call, but
   // a paired homebrew app must not be able to pull the bridge out from under
-  // everyone — so only the hub app or a headerless host tool may use it.
+  // everyone, so only the hub app or a headerless host tool may use it.
   if (path_ === '/shutdown' && req.method === 'POST') {
     const h = req.headers['x-fyaisa-app'];
     if (typeof h === 'string' && h !== OWNER_APP) {
@@ -543,7 +543,7 @@ const server = http.createServer(async (req, res) => {
 
   if (!appGate(req, res)) return;
 
-  // Pending app pairing requests — shown on the FYAISA ElevSH screen so the
+  // Pending app pairing requests, shown on the FYAISA ElevSH screen so the
   // user can approve on the TV instead of typing codes on the PC.
   if (path_ === '/pair/pending' && req.method === 'GET') {
     const h = req.headers['x-fyaisa-app'];
