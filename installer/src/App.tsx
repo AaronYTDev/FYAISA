@@ -319,15 +319,22 @@ export const App = () => {
     }
     try {
       setPair(p => ({...p, status: 'requesting', message: 'Requesting code…'}));
-      // Check the bridge is actually reachable + our token is still accepted
-      // before asking the user to fetch a code.
+      // Reachability check — deliberately GET /ping, which is tokenless. This
+      // used to call /catalog, a token-protected endpoint: it answered 401
+      // "unauthorized — pair first" precisely when no valid token existed yet,
+      // so pairing could never bootstrap itself and no code was ever issued.
+      // A stale token heals itself below: /pair/request and /pair/approve are
+      // tokenless, and /pair/approve hands back the bridge's current token.
       try {
-        await bridgeFetch('/catalog');
+        const res = await fetch(`${base}/ping`);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
       } catch (e: any) {
         setPair(p => ({
           ...p,
           status: 'error',
-          message: `Bridge unreachable or pairing stale (${e.message}). Start \`fyaisa connect --lan\` on the PC, or re-pair.`,
+          message: `ElevSH unreachable at ${base} (${e?.message || e}). Start \`fyaisa connect --lan\` on the PC.`,
         }));
         return;
       }
