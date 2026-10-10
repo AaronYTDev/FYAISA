@@ -1,7 +1,8 @@
-# fyaisa-bridge
+# fyaisa-bridge — the ElevSH bridge
 
-The PC side of `fyaisa connect`. Lets the **FYAISA app on your Fire TV** queue
-builds and installs on your computer.
+The PC side of `fyaisa connect`, aka **ElevSH**. Lets the **FYAISA app on your
+Fire TV** queue builds and installs on your computer, and decides which other
+homebrew apps may use that connection (allow/deny from the TV).
 
 ## Why it exists
 
@@ -28,11 +29,15 @@ fyaisa connect --lan          # from the repo root
 node bridge/bridge.js --lan --hub-dir ~/FYAISA
 ```
 
-When the TV app requests a pairing code, approve it on the PC with:
+When the TV app requests a pairing code, approve it either on the PC:
 
 ```bash
 fyaisa approve <6-digit-code>
 ```
+
+or on the TV in **FYAISA → ElevSH** (the request shows up there). Once an app
+has been allowed in FYAISA, later pairings from that app on the Fire TV are
+auto-approved by the bridge — see “ElevSH access control” below.
 
 Options:
 
@@ -48,17 +53,38 @@ Options:
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/ping` | no | liveness |
-| `POST` | `/pair/request` | no | get a 6-digit pairing code (10 min TTL) |
-| `GET` | `/pair/status?code=` | no | has the code been approved on the PC? |
-| `POST` | `/pair/approve` | no | exchange code → token |
+| `POST` | `/pair/request` | no | get a 6-digit pairing code (10 min TTL); send `X-FYAISA-App` so FYAISA can see + auto-approve it |
+| `GET` | `/pair/status?code=` | no | has the code been approved? |
+| `POST` | `/pair/approve` | no | exchange code → token (also allows that app's ElevSH access) |
+| `GET` | `/access/status?appId=` | no | has this app been allowed/denied yet? |
 | `GET` | `/catalog` | token | current catalog |
 | `POST` | `/install` | token | `{appId}` → `{jobId}`, builds + installs |
 | `GET` | `/job?id=` | token | job status + build log |
 | `GET` | `/jobs` | token | all jobs |
+| `GET` | `/pair/pending` | token (FYAISA) | app pairing requests waiting for a decision |
+| `GET` | `/access` | token (FYAISA) | the allow/deny list: `[{appId, status}]` |
+| `POST` | `/access` | token (FYAISA) | `{appId, decision: allow \| deny \| revoke}` |
 | `POST` | `/launch` | token | `{appId}` launch an app on the device |
 | `POST` | `/vega` | token | run an **allowlisted** `vega` CLI command on the PC |
 
 Auth is `X-FYAISA-Token: <token>` compared with `crypto.timingSafeEqual`.
+
+### ElevSH access control
+
+Requests that carry an `X-FYAISA-App: <app-id>` header are additionally gated
+per app id (`app.<name>.main`-style ids):
+
+- `app.fyaisa.hub.main` (FYAISA, the owner) is always allowed — and its
+  requests teach the bridge the Fire TV's address, which auto-approvals are
+  pinned to.
+- Any other app id needs an explicit decision on the **FYAISA → ElevSH**
+  screen: unknown ids become `pending` and get `403 access_required`;
+  denied ids get `403 access_denied`. All state persists in
+  `~/.fyaisa/bridge.json` under `access`.
+- An **allowed** app that pairs from the Fire TV's own address (fresh, within
+  72 h) is auto-approved — that's what makes app self-setup seamless.
+- Requests without an app header (host tools, `curl`) are token-only, as
+  before; the token is still the real security boundary.
 
 ## Running the Vega CLI from an app (`POST /vega`)
 

@@ -40,9 +40,9 @@ computer to do it for you:
 fyaisa connect --lan
 ```
 
-In the app: **Connect to PC** → type the PC's address with the on-screen keypad
+In the app: **ElevSH** → type the PC's address with the on-screen keypad
 → **Get pairing code** → type the 6-digit code shown in your terminal → paired.
-App detail screens then offer **Install via PC**, and the build log streams back
+App detail screens then offer **Install via ElevSH**, and the build log streams back
 to the TV.
 
 See `../bridge/README.md` for the API and security model.

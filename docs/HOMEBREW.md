@@ -88,10 +88,11 @@ vega device run-cmd --command 'ls /data'  # shell on the device (as app_user)
 
 Uninstall: `fyaisa uninstall <app-id>`.
 
-## 5. Install from the couch: pairing the TV app with your PC
+## 5. Install from the couch: pairing the TV app with your PC (ElevSH)
 
 A Vega app cannot install packages itself (no third-party install API exists in
-the SDK). So the FYAISA app on the TV *asks your PC* to do it:
+the SDK). So the FYAISA app on the TV *asks your PC* to do it — that PC
+connection is called **ElevSH**:
 
 ```bash
 fyaisa connect --lan          # run on the PC; --lan so the TV can reach it
@@ -101,15 +102,16 @@ The bridge prints:
 
 ```
   Pairing code: 126147
-  The Fire TV shows the same code in FYAISA → Connect.
-  Approve it on this PC with:
+  Approve on this PC with:
 
     fyaisa approve 126147
+
+  or open FYAISA → ElevSH on the Fire TV and choose Allow.
 ```
 
 Full walkthrough:
 
-1. **On the TV:** open **FYAISA → Connect** → enter the PC's IP with the D-pad
+1. **On the TV:** open **FYAISA → ElevSH** → enter the PC's IP with the D-pad
    keypad → **Get pairing code**. The TV requests a code from the bridge and
    displays it.
 2. **On the PC:** the same code is printed by the bridge. Approve it:
@@ -127,7 +129,26 @@ Useful flags: `--port N` (change 47821), `--tunnel` (prints cloudflared/ngrok
 commands for internet access — LAN is the intended mode), `--hub-dir <path>`.
 If the token ever goes stale (e.g. you deleted `~/.fyaisa/bridge.json`), the
 app detects the 401 on its next launch and asks you to re-pair; the **Forget
-this PC** button clears it manually.
+ElevSH pairing** button clears it manually.
+
+### Letting other apps use ElevSH (allow/deny in FYAISA)
+
+ElevSH is also the consent hub for every other homebrew app:
+
+1. An app using the vendored client sends `X-FYAISA-App: <app-id>` when it
+   requests a pairing code. The bridge records it as *pending*.
+2. **FYAISA → ElevSH** shows it live — “app.vegatube.main wants to pair”. One
+   **Allow** tap on the TV approves the pairing *and* marks the app allowed;
+   **Deny** blocks it. No PC keyboard needed.
+3. Once allowed, every future pairing by that app on this TV is
+   **auto-approved by the bridge** (pinned to the Fire TV's own network
+   address). Apps only ever type the host once; after that, setup is
+   automatic.
+
+The allow/deny list persists in `~/.fyaisa/bridge.json` (`access`) and can be
+changed any time from the FYAISA ElevSH screen. Until an app is allowed, its
+token-authenticated requests fail with `403` and `code: 'access_required'`;
+after a Deny, `code: 'access_denied'`.
 
 ## 6. Access the Vega CLI from your app (`/vega`)
 
@@ -137,7 +158,7 @@ Homebrew apps don't have to stop at pairing for installs: the bridge can also
 ```ts
 import {Fyaisa} from './fyaisaClient'; // vendored copy — see below
 
-const fy = Fyaisa.from({host: '192.168.12.102', token});
+const fy = Fyaisa.from({host: '192.168.12.102', token, appId: 'app.vegatube.main'});
 
 const cli  = await fy.vega(['--version']);              // "Vega CLI Version: 1.4.4"
 const devs = await fy.vega(['device', 'list']);         // connected Fire TVs
@@ -148,14 +169,19 @@ await fy.vega(['device', 'run-cmd', '--command', 'ls /data']); // shell on the s
 ```
 
 Every call resolves to `{ok, exitCode, stdout, stderr, truncated, durationMs}`.
-The FYAISA app itself uses this: its Connect screen shows the PC's CLI version
-and how many Fire TVs it sees.
+The FYAISA app itself uses this: its ElevSH screen shows the computer's CLI
+version and how many Fire TVs it sees.
 
 **Getting the client.** It's a single dependency-free file — copy
 [`bridge/client/fyaisaClient.ts`](../bridge/client/fyaisaClient.ts) into your
 app's `src/` (it uses the global `fetch`, so it works in React Native as-is).
 It also ships the unauthenticated pairing helpers, so your app can run the
-whole code → `fyaisa approve` → token flow itself.
+whole code → approve → token flow itself.
+
+**Identify your app.** Pass your `appId` and every request carries
+`X-FYAISA-App`; the bridge then applies the ElevSH allow/deny list the user
+manages in FYAISA (see §5). A 403 with `code: 'access_required'` means “ask the
+user to allow me in FYAISA”; `access_denied` means they said no.
 
 **What the bridge will and won't run.** `POST /vega` is deliberately not a
 shell: only `vega` is spawned (argument array, no shell), the leading args must

@@ -24,7 +24,7 @@ FYAISA/
 │   ├── README.md             # the app format (contract for contributors)
 │   └── vegatube/              # reference app — VegaTube (ad-free YouTube)
 ├── bridge/
-│   ├── bridge.js             # PC-side bridge for pairing with the TV app
+│   ├── bridge.js             # ElevSH bridge: pairing + installs + access gate
 │   └── README.md             # bridge API + security model
 ├── docs/
 │   └── HOMEBREW.md           # developer guide: Vega CLI, pairing, platform gotchas
@@ -89,7 +89,7 @@ The TV picks up its pairing token automatically and the app is paired. The
 pairing is remembered on the TV (across restarts and reboots), so it's a
 one-time step per PC.
 
-Any app's detail screen then shows **Install via PC**, which queues a real
+Any app's detail screen then shows **Install via ElevSH**, which queues a real
 build + `vega device install-app` on your machine and streams the build log back
 to the TV.
 
@@ -154,9 +154,9 @@ repo's Releases page; the catalog's `install` block describes how to get one.
 | Component | State |
 | --- | --- |
 | `fyaisa` CLI | Working — list / search / info / install / update / uninstall / devices / connect / approve |
-| `fyaisa connect` bridge | Working — pairing (incl. `fyaisa approve`), token auth, real end-to-end installs, and `POST /vega` (allowlisted CLI access for homebrew apps), all verified on a Fire TV Stick HD |
+| `fyaisa connect` bridge (ElevSH) | Working — pairing (PC or FYAISA approval, auto-approve for allowed apps), token auth, per-app allow/deny managed from FYAISA, real end-to-end installs, and `POST /vega` (allowlisted CLI access for homebrew apps), all verified on a Fire TV Stick HD |
 | Catalog | `catalog.json` schema v1, served from this repo |
-| FYAISA app | Working on a Fire TV Stick HD — live catalog fetch, pairing that persists across restarts/reboots/upgrades, Install via PC (build log streams back to the TV) |
+| FYAISA app | Working on a Fire TV Stick HD — live catalog fetch, pairing that persists across restarts/reboots/upgrades, Install via ElevSH (build log streams back to the TV), and an ElevSH screen that allows/denies other apps |
 | Apps | 1 (`app.vegatube.main` — VegaTube) |
 
 ## Not affiliated with Amazon or Google

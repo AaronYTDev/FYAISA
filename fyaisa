@@ -13,8 +13,9 @@
 #   fyaisa uninstall <app-id>        remove from the device
 #   fyaisa devices                   list Fire TVs visible to the Vega CLI
 #   fyaisa connect [--lan] [--port N] [--tunnel]
-#                                     pair this PC with a Fire TV so the FYAISA
-#                                     app on the TV can queue builds/installs
+#                                     start the ElevSH bridge: pair this PC with
+#                                     a Fire TV so the TV app can queue installs
+#                                     and gate which apps may connect (FYAISA)
 #   fyaisa approve <code>            approve the pairing code shown on the TV
 #
 # Options:

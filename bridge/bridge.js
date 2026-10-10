@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * fyaisa-bridge — the PC side of `fyaisa connect`.
+ * fyaisa-bridge — the PC side of `fyaisa connect` (the ElevSH bridge).
  *
  * A Vega OS app cannot install packages (no install API), so the Fire TV cannot
  * push .vpkg files to itself. What it *can* do is make outbound HTTP requests.
@@ -18,6 +18,10 @@
  *   - A 6-digit pairing code must be exchanged before any job is accepted.
  *   - After pairing, every request needs `X-FYAISA-Token`.
  *   - Tokens are random, stored in the state file, and never logged.
+ *   - Apps that identify themselves with `X-FYAISA-App: <app-id>` are gated:
+ *     FYAISA (the owner app) allows or denies each app id from the ElevSH
+ *     screen; unknown ids get a pending 403 until approved. Requests without
+ *     an app header (host tools, curl) are token-only, as before.
  *
  * Plain HTTP is deliberate: this is a short-lived LAN tool. Use `fyaisa connect
  * --tunnel` to wrap it in a public HTTPS tunnel if you need internet access
@@ -43,6 +47,8 @@ const PORT = parseInt(flag('--port', '47821'), 10);
 const HOST_DIR = flag('--hub-dir', process.env.FYAISA_DIR || path.join(os.homedir(), 'FYAISA'));
 const BIND = has('--lan') ? '0.0.0.0' : '127.0.0.1';
 const PAIR_TTL_MS = 10 * 60 * 1000;
+// How long the recorded Fire TV address stays fresh for auto-approvals.
+const TVIP_TTL_MS = 72 * 60 * 60 * 1000;
 const STATE_DIR = path.join(os.homedir(), '.fyaisa');
 const STATE_FILE = path.join(STATE_DIR, 'bridge.json');
 
@@ -61,6 +67,13 @@ function saveState(s) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(s, { mode: 0o600 }, null, 2));
 }
 let STATE = loadState();
+// ElevSH access decisions: appId -> 'allow' | 'deny' | 'pending'.
+STATE.access = STATE.access || {};
+// Last known Fire TV address (from FYAISA's own requests) + when we set it.
+STATE.tvIp = STATE.tvIp || null;
+STATE.tvIpAt = STATE.tvIpAt || 0;
+
+const clientIp = (req) => String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 
 const pairings = new Map(); // code -> {expires, approved}
 const jobs = new Map(); // id -> {id, appId, status, log, createdAt}
@@ -276,6 +289,62 @@ function authorized(req) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+const OWNER_APP = 'app.fyaisa.hub.main';
+const APP_ID_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+/**
+ * ElevSH access gate for apps that identify themselves with
+ * X-FYAISA-App. FYAISA (the owner app) is always allowed; any other app id
+ * needs an explicit allow decision made on the FYAISA ElevSH screen. An
+ * unknown id is recorded as pending and rejected until the user decides.
+ * Requests without an app header (host tools, curl) skip the gate.
+ * Returns false if a response has already been sent.
+ */
+function appGate(req, res) {
+  const raw = req.headers['x-fyaisa-app'];
+  if (raw === undefined) return true;
+  const appId = String(raw);
+  if (!APP_ID_RE.test(appId)) {
+    json(res, 400, { error: 'malformed X-FYAISA-App header', code: 'bad_app_id' });
+    return false;
+  }
+  if (appId === OWNER_APP) {
+    // FYAISA's own requests teach us the TV's address, which is what
+    // auto-approvals are pinned to (a LAN client cannot claim it).
+    const ip = clientIp(req);
+    if (STATE.tvIp !== ip || Date.now() - (STATE.tvIpAt || 0) > 60 * 1000) {
+      STATE.tvIp = ip;
+      STATE.tvIpAt = Date.now();
+      saveState(STATE);
+      log(`ElevSH: Fire TV address ${ip} (seen via FYAISA)`);
+    }
+    return true;
+  }
+  const d = STATE.access[appId];
+  if (d === 'allow') return true;
+  if (d === undefined) {
+    STATE.access[appId] = 'pending';
+    saveState(STATE);
+    log(`ElevSH access requested by ${appId} (pending user approval)`);
+  }
+  json(
+    res,
+    403,
+    d === 'deny'
+      ? {
+          error: 'ElevSH access denied for this app — allow it in FYAISA to continue',
+          code: 'access_denied',
+          appId,
+        }
+      : {
+          error: 'ElevSH access not granted yet — approve this app in FYAISA',
+          code: 'access_required',
+          appId,
+        },
+  );
+  return false;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const path_ = url.pathname;
@@ -283,13 +352,36 @@ const server = http.createServer(async (req, res) => {
   // liveness (unauthenticated, no secrets)
   if (path_ === '/ping') return json(res, 200, { ok: true, service: 'fyaisa-bridge' });
 
-  // pairing: TV asks for a code, user approves by typing it
+  // pairing: TV asks for a code; approve on the PC (`fyaisa approve`) or in
+  // FYAISA → ElevSH on the TV. Apps send X-FYAISA-App, which is what makes
+  // automatic setup work: if the user has allowed that app in FYAISA and the
+  // request comes from the Fire TV's own address, it is approved instantly.
   if (path_ === '/pair/request' && req.method === 'POST') {
     const code = String(Math.floor(100000 + Math.random() * 900000));
-    pairings.set(code, { expires: Date.now() + PAIR_TTL_MS, approved: false });
-    log(`pairing requested, code ${code} (valid 10 min)`);
-    console.log(`\n  Pairing code: ${code}\n  The Fire TV shows the same code in FYAISA → Connect.\n  Approve it on this PC with:\n\n    fyaisa approve ${code}\n`);
-    return json(res, 200, { code, expiresIn: PAIR_TTL_MS / 1000 });
+    const rawApp = req.headers['x-fyaisa-app'];
+    const appId = typeof rawApp === 'string' && APP_ID_RE.test(rawApp) ? rawApp : null;
+    const ip = clientIp(req);
+    const entry = { expires: Date.now() + PAIR_TTL_MS, approved: false, appId, ip };
+    pairings.set(code, entry);
+
+    if (appId && appId !== OWNER_APP && STATE.access[appId] === undefined) {
+      STATE.access[appId] = 'pending';
+      saveState(STATE);
+      log(`ElevSH access requested by ${appId} (pairing ${code})`);
+    }
+    const tvFresh = STATE.tvIp && Date.now() - (STATE.tvIpAt || 0) < TVIP_TTL_MS;
+    let auto = false;
+    if (appId && tvFresh && ip === STATE.tvIp &&
+        (appId === OWNER_APP || STATE.access[appId] === 'allow')) {
+      entry.approved = true;
+      auto = true;
+      log(`auto-approved ElevSH pairing for ${appId} (allowed, from the TV at ${ip})`);
+    }
+    log(`pairing requested, code ${code}${appId ? ` (app ${appId})` : ''}${auto ? ' — auto-approved' : ''} (valid 10 min)`);
+    if (!auto) {
+      console.log(`\n  Pairing code: ${code}${appId ? ` — requested by ${appId}` : ''}\n  Approve on this PC with:\n\n    fyaisa approve ${code}\n\n  or open FYAISA → ElevSH on the Fire TV and choose Allow.\n`);
+    }
+    return json(res, 200, { code, expiresIn: PAIR_TTL_MS / 1000, autoApproved: auto });
   }
 
   if (path_ === '/pair/status') {
@@ -309,13 +401,51 @@ const server = http.createServer(async (req, res) => {
     const p = pairings.get(code);
     if (!p || Date.now() > p.expires) return json(res, 404, { ok: false, error: 'unknown/expired code' });
     p.approved = true;
+    if (p.appId && p.appId !== OWNER_APP) {
+      // Approving an app's pairing IS allowing its ElevSH access.
+      STATE.access[p.appId] = 'allow';
+      log(`ElevSH access allow for ${p.appId} (via pairing approval)`);
+    }
     saveState(STATE); // ensure token file exists on disk
     log('pairing approved for', body.device || 'device');
     return json(res, 200, { ok: true, token: STATE.token });
   }
 
+  // App access status — deliberately tokenless: an app asks this BEFORE it
+  // has a pairing ("has the user allowed me yet?").
+  if (path_ === '/access/status' && req.method === 'GET') {
+    const appId = url.searchParams.get('appId') || '';
+    if (!APP_ID_RE.test(appId)) return json(res, 400, { error: 'bad appId', code: 'bad_app_id' });
+    return json(res, 200, {
+      appId,
+      status: appId === OWNER_APP ? 'allow' : STATE.access[appId] || 'none',
+    });
+  }
+
   // ---- everything below requires the token ----
   if (!authorized(req)) return json(res, 401, { error: 'unauthorized — pair first' });
+  if (!appGate(req, res)) return;
+
+  // Pending app pairing requests — shown on the FYAISA ElevSH screen so the
+  // user can approve on the TV instead of typing codes on the PC.
+  if (path_ === '/pair/pending' && req.method === 'GET') {
+    const h = req.headers['x-fyaisa-app'];
+    if (typeof h === 'string' && h !== OWNER_APP) {
+      return json(res, 403, { error: 'only FYAISA reads pending pairings', code: 'access_denied' });
+    }
+    const now = Date.now();
+    const pending = [];
+    for (const [code, entry] of pairings) {
+      if (entry.expires < now) {
+        pairings.delete(code);
+        continue;
+      }
+      if (!entry.approved && entry.appId) {
+        pending.push({ code, appId: entry.appId, expiresIn: Math.round((entry.expires - now) / 1000) });
+      }
+    }
+    return json(res, 200, { pairings: pending });
+  }
 
   if (path_ === '/catalog' && req.method === 'GET') {
     return json(res, 200, readCatalog());
@@ -356,6 +486,36 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { jobs: [...jobs.values()] });
   }
 
+  // ---- ElevSH access management: allow / deny / revoke app ids ----
+  if (path_ === '/access' && req.method === 'GET') {
+    const h = req.headers['x-fyaisa-app'];
+    if (typeof h === 'string' && h !== OWNER_APP) {
+      return json(res, 403, { error: 'only FYAISA manages ElevSH access', code: 'access_denied' });
+    }
+    return json(res, 200, {
+      apps: Object.entries(STATE.access).map(([appId, status]) => ({ appId, status })),
+    });
+  }
+
+  if (path_ === '/access' && req.method === 'POST') {
+    const h = req.headers['x-fyaisa-app'];
+    if (typeof h === 'string' && h !== OWNER_APP) {
+      return json(res, 403, { error: 'only FYAISA manages ElevSH access', code: 'access_denied' });
+    }
+    const body = await readBody(req);
+    const appId = String(body.appId || '');
+    const decision = String(body.decision || '');
+    if (!APP_ID_RE.test(appId)) return json(res, 400, { error: 'bad appId', code: 'bad_app_id' });
+    if (!['allow', 'deny', 'revoke'].includes(decision)) {
+      return json(res, 400, { error: 'decision must be allow | deny | revoke' });
+    }
+    if (decision === 'revoke') delete STATE.access[appId];
+    else STATE.access[appId] = decision;
+    saveState(STATE);
+    log(`ElevSH access ${decision} for ${appId}`);
+    return json(res, 200, { ok: true, appId, status: STATE.access[appId] || 'none' });
+  }
+
   if (path_ === '/launch' && req.method === 'POST') {
     const body = await readBody(req);
     const appId = String(body.appId || '');
@@ -386,12 +546,12 @@ server.listen(PORT, BIND, () => {
   }
 
   console.log('');
-  console.log('  FYAISA bridge listening');
+  console.log('  ElevSH bridge listening (FYAISA connect)');
   console.log(`    bind      ${BIND}:${PORT}`);
   for (const a of addrs) console.log(`    reachable http://${a}:${PORT}`);
   console.log('');
   console.log('  On the Fire TV: Settings → My Fire TV → Developer options,');
-  console.log('  note this PC address, then open FYAISA → Connect.');
+  console.log("  note this computer's address, then open FYAISA → ElevSH.");
   console.log('');
   if (!has('--lan')) {
     console.log('  Note: bound to localhost only. Pass --lan to accept connections');
@@ -402,7 +562,7 @@ server.listen(PORT, BIND, () => {
     console.log('  --tunnel requested. Expose this port with your own tunnel, e.g.:');
     console.log(`    cloudflared tunnel --url http://localhost:${PORT}`);
     console.log(`    ngrok http ${PORT}`);
-    console.log('  Then enter the public https:// URL in the FYAISA app.');
+    console.log('  Then enter the public https:// URL in the FYAISA ElevSH screen.');
     console.log('  Only do this on networks you trust: anyone who knows the');
     console.log('  pairing code and token can queue installs on your machine.');
   }

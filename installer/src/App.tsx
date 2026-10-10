@@ -55,13 +55,16 @@ type Catalog = { hub?: {name?: string; tagline?: string}; apps?: HubApp[] };
  * Bridge pairing.
  *
  * A Vega OS app cannot install packages, so control is inverted: this app is a
- * client for the `fyaisa connect` bridge running on the user's PC. It can make
- * outbound HTTP, which is all we need.
+ * client for the ElevSH bridge (`fyaisa connect`) running on the user's
+ * computer. It can make outbound HTTP, which is all we need. ElevSH is also
+ * the consent hub: other apps' pairing requests show up here to Allow/Deny.
  * ------------------------------------------------------------------------- */
 const BRIDGE_PORT = 47821;
 const PAIR_POLL_MS = 2000;
+/** This app's id — sent as X-FYAISA-App; the bridge treats us as the owner. */
+const HUB_APP_ID = 'app.fyaisa.hub.main';
 /**
- * Persisted pairing, so the TV doesn't forget its PC on every restart.
+ * Persisted pairing, so the TV doesn't forget its ElevSH host on every restart.
  *
  * Storage notes (learned the hard way):
  *  - AsyncStorage is NOT available on Vega OS: installing it succeeds at
@@ -82,6 +85,9 @@ const STORE_PATH = '/data/bridge.json';
 
 const savePair = async (p: SavedPair) => {
   try {
+    // writeStringToFile fails with AlreadyExistsError if the file is there —
+    // remove first (the pairing file is tiny; atomicity doesn't matter).
+    await KeplerFileSystem.removeFile(STORE_PATH).catch(() => {});
     await KeplerFileSystem.writeStringToFile(STORE_PATH, JSON.stringify(p), 'UTF-8');
     console.info(`[FYAISA] pairing saved to ${STORE_PATH}`);
   } catch (e: any) {
@@ -149,7 +155,7 @@ const statusColor = (s?: string) =>
   s === 'stable' ? '#4caf50' : s === 'beta' ? '#ffb300' : '#9e9e9e';
 
 /**
- * Ask the paired PC what it can do — CLI version + how many Fire TVs it sees.
+ * Ask ElevSH what it can do — CLI version + how many Fire TVs it sees.
  * This goes through the bridge's /vega endpoint, which runs allowlisted `vega`
  * commands on the PC on our behalf.
  */
@@ -163,7 +169,7 @@ const describePc = async (fy: Fyaisa): Promise<string> => {
     const n = (devs.stdout.match(/\d+\.\d+\.\d+\.\d+:\d+/g) || []).length;
     return `Vega CLI ${m ? m[1] : 'ok'} · ${n} device${n === 1 ? '' : 's'} connected`;
   } catch (e: any) {
-    return `PC reachable, but the Vega CLI failed (${e?.message || e})`;
+    return `ElevSH reachable, but the Vega CLI failed (${e?.message || e})`;
   }
 };
 
@@ -192,18 +198,21 @@ export const App = () => {
   });
   /** One-line summary of what the paired PC can do (via /vega). */
   const [pcInfo, setPcInfo] = useState<string | null>(null);
+  // ElevSH access screen: apps that asked for access + their decisions.
+  const [access, setAccess] = useState<{appId: string; status: string}[] | null>(null);
+  const [pairReqs, setPairReqs] = useState<{code: string; appId: string; expiresIn: number}[] | null>(null);
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
   // Restore a previous pairing on launch. React state alone is lost on every
   // app restart, which made the Install button disappear after a reboot even
-  // though the PC was still paired.
+  // though ElevSH was still paired.
   //
   // We then verify the saved token against the bridge: GET /catalog requires
   // X-FYAISA-Token, so a 401 means the bridge regenerated its token (e.g.
   // ~/.fyaisa/bridge.json was deleted) and we must re-pair. A network error
-  // just means the PC is offline — keep the pairing, it still works when the
-  // PC is back on the same network.
+  // just means ElevSH is offline — keep the pairing; it works again when the
+  // computer is back on the same network.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -222,7 +231,7 @@ export const App = () => {
         message: 'Connected',
       }));
       try {
-        const fy = new Fyaisa(saved.host, saved.token, BRIDGE_PORT);
+        const fy = new Fyaisa(saved.host, saved.token, BRIDGE_PORT, HUB_APP_ID);
         await fy.catalog(); // token validation: 401 => stale pairing
         if (!cancelled) {
           setPcInfo(await describePc(fy));
@@ -240,11 +249,11 @@ export const App = () => {
             }));
           }
         } else {
-          // PC unreachable right now — stay paired; it may come back when the
-          // PC is on the same network.
-          console.info('[FYAISA] bridge unreachable during restore check (PC offline?)');
+          // ElevSH unreachable right now — stay paired; it may come back when
+          // the computer is on the same network again.
+          console.info('[FYAISA] bridge unreachable during restore check (ElevSH offline?)');
           if (!cancelled) {
-            setPcInfo('PC offline right now');
+            setPcInfo('ElevSH offline right now');
           }
         }
       }
@@ -262,6 +271,7 @@ export const App = () => {
         headers: {
           'Content-Type': 'application/json',
           ...(pair.token ? {'X-FYAISA-Token': pair.token} : {}),
+          'X-FYAISA-App': HUB_APP_ID,
           ...(opts.headers || {}),
         },
       });
@@ -274,10 +284,37 @@ export const App = () => {
     [base, pair.token],
   );
 
+  // ElevSH access screen data: pairing requests + allow/deny decisions.
+  useEffect(() => {
+    if (pair.status !== 'paired') {
+      setAccess(null);
+      setPairReqs(null);
+      return;
+    }
+    let dead = false;
+    const refresh = async () => {
+      try {
+        const [a, pr] = await Promise.all([bridgeFetch('/access'), bridgeFetch('/pair/pending')]);
+        if (!dead) {
+          setAccess(a.apps || []);
+          setPairReqs(pr.pairings || []);
+        }
+      } catch {
+        // Bridge offline — keep the last snapshot; the status line says so.
+      }
+    };
+    refresh();
+    const iv = setInterval(refresh, 6000);
+    return () => {
+      dead = true;
+      clearInterval(iv);
+    };
+  }, [pair.status, bridgeFetch]);
+
   /** Ask the bridge for a code, then poll until the user approves it on the PC. */
   const startPairing = useCallback(async () => {
     if (!base) {
-      setPair(p => ({...p, status: 'error', message: 'Set the PC address first'}));
+      setPair(p => ({...p, status: 'error', message: 'Enter your computer’s address first'}));
       return;
     }
     try {
@@ -295,7 +332,7 @@ export const App = () => {
         return;
       }
       const {code} = await bridgeFetch('/pair/request', {method: 'POST'});
-      setPair(p => ({...p, code, status: 'awaiting', message: `Enter code ${code} on your PC`}));
+      setPair(p => ({...p, code, status: 'awaiting', message: `On the PC: fyaisa approve ${code}`}));
       // Poll for approval; the bridge approves once the user types the code.
       const iv = setInterval(async () => {
         try {
@@ -321,7 +358,7 @@ export const App = () => {
             });
             console.info('[FYAISA] paired with bridge');
             if (pair.host) {
-              setPcInfo(await describePc(new Fyaisa(pair.host, ok.token, BRIDGE_PORT)));
+              setPcInfo(await describePc(new Fyaisa(pair.host, ok.token, BRIDGE_PORT, HUB_APP_ID)));
             }
           }
         } catch (e: any) {
@@ -334,7 +371,7 @@ export const App = () => {
     }
   }, [base, bridgeFetch]);
 
-  /** Queue a build+install on the PC and poll the job. */
+  /** Queue a build+install over ElevSH and poll the job. */
   const requestInstall = useCallback(
     async (appId: string) => {
       try {
@@ -357,6 +394,38 @@ export const App = () => {
         }, PAIR_POLL_MS);
       } catch (e: any) {
         setPair(p => ({...p, status: 'error', message: e.message}));
+      }
+    },
+    [bridgeFetch],
+  );
+
+  /** Allow / deny / revoke an app's ElevSH access from the TV. */
+  const decideAccess = useCallback(
+    async (appId: string, decision: 'allow' | 'deny' | 'revoke') => {
+      try {
+        await bridgeFetch('/access', {
+          method: 'POST',
+          body: JSON.stringify({appId, decision}),
+        });
+        console.info(`[FYAISA] ElevSH access ${decision}: ${appId}`);
+      } catch (e: any) {
+        console.error(`[FYAISA] access update failed: ${e.message}`);
+      }
+    },
+    [bridgeFetch],
+  );
+
+  /** Approve an app's pending pairing (this also allows its access). */
+  const approvePairing = useCallback(
+    async (code: string) => {
+      try {
+        await bridgeFetch('/pair/approve', {
+          method: 'POST',
+          body: JSON.stringify({code, device: 'fyaisa-app'}),
+        });
+        console.info('[FYAISA] ElevSH pairing approved from the TV');
+      } catch (e: any) {
+        console.error(`[FYAISA] approve failed: ${e.message}`);
       }
     },
     [bridgeFetch],
@@ -421,9 +490,10 @@ export const App = () => {
     return (
       <View style={styles.wrap}>
         <ScrollView contentContainerStyle={styles.list}>
-          <Text style={styles.brand}>Connect to PC</Text>
+          <Text style={styles.brand}>ElevSH</Text>
           <Text style={styles.tagline}>
-            Pair with `fyaisa connect` on your computer so this TV can install apps.
+            ElevSH pairs this Fire TV with your computer. Pair once here, then
+            allow apps from this screen — they connect automatically.
           </Text>
 
           <View style={styles.card}>
@@ -435,7 +505,7 @@ export const App = () => {
           </View>
 
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Step 2 — PC address</Text>
+            <Text style={styles.cardTitle}>Step 2 — computer address</Text>
             <Text style={styles.howtoBody}>
               Find it under Fire TV → Developer options, or type it below.
             </Text>
@@ -486,10 +556,88 @@ export const App = () => {
                   setPair(p => ({...p, token: null, code: null, status: 'idle', message: 'Pairing forgotten'}));
                   console.info('[FYAISA] pairing cleared');
                 }}>
-                <Text style={styles.forgetText}>Forget this PC</Text>
+                <Text style={styles.forgetText}>Forget ElevSH pairing</Text>
               </Pressable>
             ) : null}
           </View>
+
+          {pair.status === 'paired' ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>ElevSH access</Text>
+              <Text style={styles.howtoBody}>
+                Apps that asked to reach your computer through ElevSH. Allow lets
+                them pair automatically from this Fire TV; Deny blocks them.
+              </Text>
+
+              {(pairReqs || []).map(r => (
+                <View key={r.code} style={styles.accessRow}>
+                  <View style={styles.accessMain}>
+                    <Text style={styles.accessApp}>{r.appId}</Text>
+                    <Text style={styles.accessMeta}>
+                      wants to pair · code {r.code} · {r.expiresIn}s left
+                    </Text>
+                  </View>
+                  <Pressable
+                    style={focusable(styles.allowBtn)}
+                    onPress={() => approvePairing(r.code)}>
+                    <Text style={styles.accessBtnText}>Allow</Text>
+                  </Pressable>
+                </View>
+              ))}
+
+              {(access || [])
+                .filter(
+                  a =>
+                    !(
+                      a.status === 'pending' &&
+                      (pairReqs || []).some(r => r.appId === a.appId)
+                    ),
+                )
+                .map(a => (
+                  <View key={a.appId} style={styles.accessRow}>
+                    <View style={styles.accessMain}>
+                      <Text style={styles.accessApp}>{a.appId}</Text>
+                      <Text
+                        style={[
+                          styles.accessMeta,
+                          a.status === 'allow' && {color: '#7ee787'},
+                          a.status === 'deny' && {color: '#e57373'},
+                        ]}>
+                        {a.status === 'allow'
+                          ? 'allowed — pairs automatically'
+                          : a.status === 'deny'
+                            ? 'denied'
+                            : 'waiting for a decision'}
+                      </Text>
+                    </View>
+                    {a.status === 'allow' ? (
+                      <Pressable
+                        style={focusable(styles.denyBtn)}
+                        onPress={() => decideAccess(a.appId, 'deny')}>
+                        <Text style={styles.accessBtnText}>Deny</Text>
+                      </Pressable>
+                    ) : (
+                      <Pressable
+                        style={focusable(styles.allowBtn)}
+                        onPress={() => decideAccess(a.appId, 'allow')}>
+                        <Text style={styles.accessBtnText}>Allow</Text>
+                      </Pressable>
+                    )}
+                    {a.status !== 'allow' ? (
+                      <Pressable
+                        style={focusable(styles.denyBtn)}
+                        onPress={() => decideAccess(a.appId, 'deny')}>
+                        <Text style={styles.accessBtnText}>Deny</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                ))}
+
+              {!(pairReqs || []).length && !(access || []).length ? (
+                <Text style={styles.dim}>No apps have asked for ElevSH access yet.</Text>
+              ) : null}
+            </View>
+          ) : null}
 
           <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
             <Text style={styles.backText}>Back</Text>
@@ -555,13 +703,13 @@ export const App = () => {
             {pair.status === 'paired' && pair.host ? (
               <>
                 <Text style={styles.howtoBody}>
-                  …or install from right here using the paired PC ({pair.host}):
+                  …or install from right here over ElevSH ({pair.host}):
                 </Text>
                 <Pressable
                   hasTVPreferredFocus
                   style={focusable(styles.installBtn)}
                   onPress={() => requestInstall(selected.id)}>
-                  <Text style={styles.backText}>Install via PC ({pair.host})</Text>
+                  <Text style={styles.backText}>Install via ElevSH ({pair.host})</Text>
                 </Pressable>
                 {pair.job ? (
                   <View style={styles.job}>
@@ -578,7 +726,7 @@ export const App = () => {
               </>
             ) : (
               <Text style={styles.howtoBody}>
-                Pair a PC (FYAISA → Connect) to install from the couch.
+                Set up ElevSH (FYAISA → ElevSH) to install from the couch.
               </Text>
             )}
             <Text style={styles.howtoBody}>Hub: {HUB_URL}</Text>
@@ -607,8 +755,8 @@ export const App = () => {
           onPress={() => setSelectedId('__connect__')}>
           <Text style={styles.connectText}>
             {pair.status === 'paired'
-              ? `PC: ${pair.host} (connected)`
-              : `Connect to PC — ${pair.message}`}
+              ? `ElevSH: ${pair.host} (connected)`
+              : `ElevSH — ${pair.message}`}
           </Text>
         </Pressable>
       </View>
@@ -784,6 +932,39 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   forgetText: {color: '#e57373', fontSize: 16},
+  accessRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a23',
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: '#2a2a38',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginTop: 10,
+  },
+  accessMain: {flex: 1, paddingRight: 12},
+  accessApp: {color: '#fff', fontSize: 16, fontWeight: '600'},
+  accessMeta: {color: '#8b8b99', fontSize: 13, marginTop: 2},
+  allowBtn: {
+    backgroundColor: '#1c7d32',
+    borderRadius: 6,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    marginLeft: 8,
+  },
+  denyBtn: {
+    backgroundColor: '#3a2020',
+    borderRadius: 6,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    marginLeft: 8,
+  },
+  accessBtnText: {color: '#fff', fontSize: 15, fontWeight: '600'},
   /**
    * The TV focus ring. Without it the selected control is nearly invisible on
    * this dark UI — every focusable appends this when focused, giving a thick

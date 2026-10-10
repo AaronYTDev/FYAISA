@@ -8,8 +8,9 @@
  *
  * VegaTube is the FYAISA example app: it demonstrates how a homebrew Vega app
  * uses the FYAISA bridge (`fyaisa connect`) — the startup menu checks the hub
- * for new versions and can rebuild + reinstall itself on the Fire TV through
- * the paired PC. See src/fyaisaClient.ts and docs/HOMEBREW.md §6.
+ * for new versions and can rebuild + reinstall itself on the Fire TV over
+ * ElevSH, the PC connection FYAISA manages. See src/fyaisaClient.ts and
+ * docs/HOMEBREW.md §6.
  *
  * This mirrors how TizenTube Standalone works on Samsung Tizen (a bare app
  * container around youtube.com/tv + script injection) and how TizenTube
@@ -282,13 +283,18 @@ const isMainFrameUrl = (url?: string): boolean => {
   }
 };
 
-// --- FYAISA pairing persistence (KeplerFileSystem; /data is per-app) --------
-type SavedPair = {host: string; token: string};
+// --- ElevSH pairing persistence (KeplerFileSystem; /data is per-app) --------
+/** token is optional: the host is remembered after first typing, even while
+ *  waiting for FYAISA to Allow this app — the token arrives on auto-pair. */
+type SavedPair = {host: string; token?: string};
 
 const savePair = async (p: SavedPair) => {
   try {
+    // writeStringToFile fails with AlreadyExistsError if the file is there —
+    // remove first (the pairing file is tiny; atomicity doesn't matter).
+    await KeplerFileSystem.removeFile(STORE_PATH).catch(() => {});
     await KeplerFileSystem.writeStringToFile(STORE_PATH, JSON.stringify(p), 'UTF-8');
-    console.info(`[VegaTube] FYAISA pairing saved (${p.host})`);
+    console.info(`[VegaTube] ElevSH pairing saved (${p.host}${p.token ? '' : ', host only'})`);
   } catch (e: any) {
     console.error(`[VegaTube] could not save pairing: ${e?.message || e}`);
   }
@@ -300,7 +306,7 @@ const loadPair = async (): Promise<SavedPair | null> => {
       return null;
     }
     const p = JSON.parse(await KeplerFileSystem.readFileAsString(STORE_PATH, 'UTF-8'));
-    return p && p.host && p.token ? (p as SavedPair) : null;
+    return p && p.host ? (p as SavedPair) : null;
   } catch {
     return null;
   }
@@ -314,7 +320,7 @@ const clearPair = async () => {
   }
 };
 
-/** D-pad keypad for typing the PC address (dots and backspace included). */
+/** D-pad keypad for typing the computer address (dots and backspace). */
 const HOST_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'];
 
 /**
@@ -342,7 +348,7 @@ export const App = () => {
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backDeliveredRef = useRef(true);
 
-  // FYAISA panel (startup menu): hub status, update check, PC pairing.
+  // FYAISA panel (startup menu): hub status, update check, ElevSH pairing.
   const [menu, setMenu] = useState<'hidden' | 'menu' | 'pair'>('menu');
   const [pair, setPair] = useState<SavedPair | null>(null);
   const [pairHost, setPairHost] = useState('');
@@ -401,7 +407,7 @@ export const App = () => {
 
   // FYAISA panel: load saved pairing + check the hub for a new VegaTube
   // version. The update check runs against the published catalog (no pairing
-  // needed); installing the update requires the paired PC bridge.
+  // needed); installing the update requires ElevSH (the paired bridge).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -437,19 +443,17 @@ export const App = () => {
       if (cancelled || !saved) {
         return;
       }
-      setPair(saved);
-      try {
-        await Fyaisa.from(saved).catalog(); // token check: 401 => stale
-        console.info(`[VegaTube] FYAISA bridge reachable at ${saved.host}`);
-      } catch (e: any) {
-        if (e instanceof FyaisaError && e.status === 401) {
-          await clearPair();
-          if (!cancelled) {
-            setPair(null);
-          }
-          console.warn('[VegaTube] FYAISA pairing expired — re-pair from the menu');
-        }
+      if (saved.token) {
+        setPair(saved);
+        verifyPair(saved);
+        return;
       }
+      // Host known from an earlier visit but no token yet: pair automatically.
+      // First time, FYAISA has to Allow this app; after that the bridge
+      // approves these requests by itself (allowed app + the TV's address).
+      setPairHost(saved.host);
+      console.info('[VegaTube] host saved, no token — auto-pairing with ElevSH');
+      startPair(saved.host);
     })();
     return () => {
       cancelled = true;
@@ -459,8 +463,8 @@ export const App = () => {
   // The menu is a startup convenience, not a lockout — it steps aside on its
   // own so YouTube is one press (or zero) away.
   useEffect(() => {
-    if (menu !== 'menu') {
-      return;
+    if (menu !== 'menu' || pairCode) {
+      return; // keep the code on screen until pairing finishes
     }
     menuTimerRef.current = setTimeout(() => setMenu('hidden'), 20000);
     return () => {
@@ -468,7 +472,7 @@ export const App = () => {
         clearTimeout(menuTimerRef.current);
       }
     };
-  }, [menu]);
+  }, [menu, pairCode]);
 
   // While the FYAISA menu is open, Back closes it instead of talking to
   // YouTube. Declared after the YouTube Back effect so it runs first (LIFO).
@@ -647,48 +651,116 @@ export const App = () => {
     (webRef.current as any)?.reload();
   }, []);
 
-  // --- FYAISA panel actions -------------------------------------------------
+  // --- ElevSH panel actions -------------------------------------------------
 
   const dismissMenu = useCallback(() => setMenu('hidden'), []);
 
-  /** Get a pairing code from the bridge, show it, wait for `fyaisa approve`. */
-  const startPair = useCallback(async () => {
-    const host = pairHost.trim();
-    if (!host) {
-      setHubStatus('Enter your PC address first (shown by fyaisa connect)');
+  const accessRetryRef = useRef(0);
+
+  /**
+   * Validate a saved token against the bridge. 401 clears the pairing;
+   * ElevSH access codes (403) are surfaced in the status line and retried for
+   * a couple of minutes so an Allow in FYAISA lands without a restart.
+   */
+  const verifyPair = useCallback(async (sp: SavedPair) => {
+    if (!sp.token) {
       return;
     }
     try {
-      setHubStatus('Requesting a pairing code…');
-      const {code} = await Fyaisa.requestCode(host, BRIDGE_PORT);
-      setPairCode(code);
-      setHubStatus(`On the PC:  fyaisa approve ${code}`);
-      const p = await Fyaisa.waitForApproval(host, code, BRIDGE_PORT);
-      await savePair(p);
-      setPair(p);
-      setPairCode(null);
-      setHubStatus('Paired — updates install through your PC');
-      setMenu('menu');
-      console.info('[VegaTube] paired with FYAISA bridge');
+      await Fyaisa.from({host: sp.host, token: sp.token, appId: VEGATUBE_APP_ID}).catalog();
+      console.info(`[VegaTube] ElevSH bridge reachable at ${sp.host}`);
+      accessRetryRef.current = 0;
+      setHubStatus(prev => (prev && prev.startsWith('Allow') ? 'ElevSH connected' : prev));
     } catch (e: any) {
-      setPairCode(null);
-      setHubStatus(`Pairing failed: ${e?.message || e}`);
+      if (e instanceof FyaisaError && e.status === 401) {
+        await clearPair();
+        setPair(null);
+        setPairHost('');
+        console.warn('[VegaTube] pairing expired — pair from the menu');
+        setHubStatus('ElevSH pairing expired — pair again from the menu');
+      } else if (e instanceof FyaisaError && e.code === 'access_denied') {
+        console.warn('[VegaTube] ElevSH access denied in FYAISA');
+        setHubStatus('ElevSH access denied for VegaTube — allow it in FYAISA');
+      } else if (e instanceof FyaisaError && e.code === 'access_required') {
+        console.info('[VegaTube] waiting for ElevSH access approval in FYAISA');
+        setHubStatus('Allow VegaTube in FYAISA → ElevSH');
+        if (accessRetryRef.current < 18) {
+          accessRetryRef.current += 1;
+          setTimeout(() => verifyPair(sp), 8000);
+        }
+      } else {
+        console.info('[VegaTube] ElevSH offline during restore check');
+        setHubStatus('ElevSH offline right now');
+      }
     }
-  }, [pairHost]);
+  }, []);
+
+  /**
+   * Pair with the bridge. Called automatically with the remembered host, or
+   * from the keypad. The bridge auto-approves when FYAISA has allowed this app
+   * and the request comes from this TV; otherwise it shows up on FYAISA's
+   * ElevSH screen (or `fyaisa approve <code>` on the PC).
+   */
+  const startPair = useCallback(
+    async (hostArg?: string) => {
+      const host = (hostArg ?? pairHost).trim();
+      if (!host) {
+        setHubStatus('Enter your computer’s address first (shown by fyaisa connect)');
+        return;
+      }
+      try {
+        setHubStatus('Requesting ElevSH pairing…');
+        const {code, autoApproved} = await Fyaisa.requestCode(host, BRIDGE_PORT, VEGATUBE_APP_ID);
+        setPairCode(code);
+        await savePair({host}); // remember the host even before we have a token
+        setHubStatus(
+          autoApproved
+            ? 'ElevSH access already allowed — connecting…'
+            : `Allow VegaTube in FYAISA → ElevSH (code ${code})`,
+        );
+        const p = await Fyaisa.waitForApproval(host, code, BRIDGE_PORT, 2000, 600000, {
+          appId: VEGATUBE_APP_ID,
+        });
+        await savePair(p);
+        setPair(p);
+        setPairCode(null);
+        setHubStatus('ElevSH connected — updates install through it');
+        setMenu('menu');
+        console.info('[VegaTube] paired with ElevSH bridge');
+        verifyPair(p);
+      } catch (e: any) {
+        setPairCode(null);
+        setHubStatus(
+          e instanceof FyaisaError && e.code === 'access_denied'
+            ? 'ElevSH access denied for VegaTube — allow it in FYAISA'
+            : `Pairing failed: ${e?.message || e}`,
+        );
+      }
+    },
+    [pairHost, verifyPair],
+  );
 
   const forget = useCallback(async () => {
     await clearPair();
     setPair(null);
-    setHubStatus('PC forgotten');
+    setPairHost('');
+    setHubStatus('ElevSH pairing forgotten');
   }, []);
 
-  /** Queue a rebuild + reinstall of VegaTube on the PC; stream the log. */
+  /** Queue a rebuild + reinstall of VegaTube over ElevSH; stream the log. */
   const updateViaPc = useCallback(async () => {
-    if (!pair) {
+    const token = pair?.token;
+    if (!pair || !token) {
       return;
     }
+    const accessMsg = (e: any) =>
+      e instanceof FyaisaError && e.code === 'access_required'
+        ? 'Allow VegaTube in FYAISA → ElevSH first'
+        : e instanceof FyaisaError && e.code === 'access_denied'
+          ? 'ElevSH access denied in FYAISA'
+          : null;
     try {
-      const fy = Fyaisa.from(pair);
+      const fy = Fyaisa.from({host: pair.host, token, appId: VEGATUBE_APP_ID});
       const {jobId} = await fy.install(VEGATUBE_APP_ID);
       setJob({status: 'queued', log: []});
       console.info(`[VegaTube] update job queued: ${jobId}`);
@@ -700,13 +772,16 @@ export const App = () => {
             clearInterval(iv);
             console.info(`[VegaTube] update job ${j.status}`);
           }
-        } catch {
+        } catch (e: any) {
           clearInterval(iv);
-          setJob(prev => ({status: 'error', log: [...(prev?.log || []), 'bridge unreachable']}));
+          setJob(prev => ({
+            status: 'error',
+            log: [...(prev?.log || []), accessMsg(e) || 'bridge unreachable'],
+          }));
         }
       }, 2500);
     } catch (e: any) {
-      setJob({status: 'error', log: [String(e?.message || e)]});
+      setJob({status: 'error', log: [accessMsg(e) || String(e?.message || e)]});
     }
   }, [pair]);
 
@@ -791,8 +866,8 @@ export const App = () => {
             {menu === 'pair' ? (
               <>
                 <Text style={styles.menuHint}>
-                  Enter your PC’s address, then Get pairing code. On the PC: fyaisa
-                  approve &lt;code&gt;
+                  Enter your computer’s address, then Get pairing code. Approve in
+                  FYAISA → ElevSH, or on the PC: fyaisa approve &lt;code&gt;
                 </Text>
                 <View style={styles.keypad}>
                   {HOST_KEYS.map(k => (
@@ -812,7 +887,7 @@ export const App = () => {
                 {pairCode ? (
                   <Text style={styles.menuCode}>Code: {pairCode}</Text>
                 ) : null}
-                <KeplerPressable hasTVPreferredFocus style={focusRing} onPress={startPair}>
+                <KeplerPressable hasTVPreferredFocus style={focusRing} onPress={() => startPair()}>
                   <View style={styles.menuBtn}>
                     <Text style={styles.menuBtnText}>
                       {pairCode ? 'Waiting for approval…' : 'Get pairing code'}
@@ -831,7 +906,7 @@ export const App = () => {
                   <KeplerPressable hasTVPreferredFocus style={focusRing} onPress={updateViaPc}>
                     <View style={styles.menuBtn}>
                       <Text style={styles.menuBtnText}>
-                        Update to v{updateVersion} via PC
+                        Update to v{updateVersion} via ElevSH
                       </Text>
                     </View>
                   </KeplerPressable>
@@ -842,14 +917,14 @@ export const App = () => {
                   onPress={() => setMenu('pair')}>
                   <View style={styles.menuBtnGhost}>
                     <Text style={styles.menuBtnText}>
-                      {pair ? 'Pair a different PC' : 'Pair with PC'}
+                      {pair ? 'Change ElevSH host' : 'Pair with ElevSH'}
                     </Text>
                   </View>
                 </KeplerPressable>
                 {pair ? (
                   <KeplerPressable style={focusRing} onPress={forget}>
                     <View style={styles.menuBtnGhost}>
-                      <Text style={styles.menuBtnText}>Forget PC</Text>
+                      <Text style={styles.menuBtnText}>Forget ElevSH</Text>
                     </View>
                   </KeplerPressable>
                 ) : null}
@@ -871,7 +946,7 @@ export const App = () => {
               </>
             )}
             <Text style={styles.menuFooter}>
-              Powered by FYAISA — run “fyaisa connect” on your PC
+              Powered by FYAISA — ElevSH runs via “fyaisa connect” on your computer
             </Text>
           </View>
         </View>

@@ -3,7 +3,8 @@
 The reference app for the [FYAISA](../../) hub — it proved out the Vega OS
 WebView injection technique, and as of 1.1.0 it's the FYAISA example app: its
 startup menu checks the hub for new versions and can rebuild + reinstall
-itself on the Fire TV through a paired PC (`fyaisa connect`).
+itself on the Fire TV over ElevSH — the PC connection FYAISA manages
+(`fyaisa connect`). Pairing is automatic once FYAISA allows the app.
 
 Ad-free, sponsor-free YouTube for the latest Amazon Fire TV Sticks running Vega
 OS (Fire TV Stick 4K Select, Fire TV Stick HD, Fire TV Stick 4K). These devices
