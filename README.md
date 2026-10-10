@@ -1,5 +1,5 @@
 # FYAISA
-## (Pronounced Fee-eye-sha)
+## (Pronounced Fie-eye-sha)
 The one-stop homebrew shop for Vega OS devices.
 
 With a CLI for installing, and an on-device app.
