@@ -9,9 +9,11 @@
  * bundle was accepted and never executed), so it crosses in 16 KB
  * order-independent chunks that the page reassembles, decodes and evals.
  *
- * Controls live in the shell's key shim; the one thing the page cannot see
- * is Back (the WebView swallows it), so Back is handled here and injected
- * into the page as the Use key. Home exits the app.
+ * Controls live in the shell's key shim; the remote's system buttons never
+ * reach the WebView at all, so they are handled here instead: Back is the
+ * Use key, Menu is Escape (the DOOM menu and backing out of submenus), both
+ * injected into the page. Every raw TV event is logged so a button that is
+ * not mapped yet still shows up in logcat. Home exits the app.
  */
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {BackHandler, StyleSheet, Text, View} from 'react-native';
@@ -19,6 +21,8 @@ import {WebView} from '@amazon-devices/webview';
 import {
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
+  useTVEventHandler,
+  type HWEvent,
 } from '@amazon-devices/react-native-kepler';
 import {DOOM_B64} from './doomPayload';
 
@@ -45,11 +49,19 @@ const buildChunkScript = (index: number): string =>
   JSON.stringify(CHUNKS[index]) +
   ');';
 
-/** Space keydown+keyup: DOOM's open doors and press switches. */
-const USE_KEY_SCRIPT =
-  "window.__doomKey&&(" +
-  "window.__doomKey(' ','Space',32,'keydown');" +
-  "window.__doomKey(' ','Space',32,'keyup'));true;";
+/** Space pair: DOOM's open doors and press switches (single-flighted in the page). */
+const USE_KEY_SCRIPT = 'window.__doomUse&&window.__doomUse();true;';
+
+/** Escape pair: the DOOM menu, and backing out of submenus. */
+const ESCAPE_KEY_SCRIPT = 'window.__doomEscape&&window.__doomEscape();true;';
+
+/** D-pad directions are the page's own business; log the rest of the remote. */
+const NAV_KEYS: Record<string, boolean> = {
+  up: true,
+  down: true,
+  left: true,
+  right: true,
+};
 
 export const App = () => {
   usePreventHideSplashScreen();
@@ -106,6 +118,36 @@ export const App = () => {
       // Not our JSON.
     }
   }, []);
+
+  // Menu and Play/Pause are system buttons: the WebView never sees them, but
+  // the UserInputManager does. Forward the two that matter into the page and
+  // log every other event, pressing on (action 0 or a single fire) only.
+  useTVEventHandler(
+    useCallback(
+      (event: HWEvent) => {
+        const action = event.eventKeyAction;
+        if (!NAV_KEYS[event.eventType]) {
+          console.info(`[doom] tv ${event.eventType} a${action ?? '?'}`);
+        }
+        if (action === 1 || loadError) {
+          return; // key release (handled on press) or no page to talk to
+        }
+        const web = webRef.current as any;
+        if (!web?.injectJavaScript) {
+          return;
+        }
+        if (event.eventType === 'menu') {
+          web.injectJavaScript(ESCAPE_KEY_SCRIPT);
+        } else if (
+          event.eventType === 'playpause' ||
+          event.eventType === 'pause'
+        ) {
+          web.injectJavaScript(USE_KEY_SCRIPT);
+        }
+      },
+      [loadError],
+    ),
+  );
 
   // The WebView swallows Back, so the page never sees it: forward it as the
   // Use key. Once the shell failed to load there is nothing to use, so Back

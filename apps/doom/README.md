@@ -23,9 +23,9 @@ app; nothing loads from the network after install.
 | OK | fire in play, select in menus (sends Ctrl and Enter; the engine ignores whichever does not apply) |
 | Back | use: open doors, press switches. The app injects it because the WebView swallows Back |
 | Home | exit the app |
-| Play / Pause | use, when the remote's media key reaches the page |
-| Rewind / Fast-forward | strafe left / right, same caveat |
-| Menu | the DOOM menu (Esc), same caveat |
+| Play / Pause | use: the page maps the media key and React Native forwards the playpause TV event, so whichever pipe your remote uses works |
+| Rewind / Fast-forward | strafe left / right, from the media key or a MediaSession seek |
+| Menu | the DOOM menu, and one level back out of submenus (Esc). Menu never reaches the WebView, so React Native forwards it from the TV event hook |
 
 From the title screen, OK steps through New Game and the skill pick and
 drops you in E1M1.

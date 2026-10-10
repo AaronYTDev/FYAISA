@@ -110,25 +110,41 @@
       canvas.dispatchEvent(ev);
     }
 
-    // React Native calls this too: Back is the Use key, injected from native.
+    // One physical button can reach this page through several pipes at once
+    // (a page key event, React Native's TV hook, MediaSession), and Escape
+    // fired twice in a row would open the DOOM menu and close it again. All
+    // Use and Escape actions funnel through these guards, which drop
+    // repeats inside 150 ms as duplicates of the same press.
+    var lastUse = 0;
+    var lastEscape = 0;
+    function use() {
+      var now = Date.now();
+      if (now - lastUse < 150) { return; }
+      lastUse = now;
+      syn(' ', 'Space', 32, 'keydown');
+      syn(' ', 'Space', 32, 'keyup');
+    }
+    function escape() {
+      var now = Date.now();
+      if (now - lastEscape < 150) { return; }
+      lastEscape = now;
+      syn('Escape', 'Escape', 27, 'keydown');
+      syn('Escape', 'Escape', 27, 'keyup');
+    }
+    window.__doomUse = use;
+    window.__doomEscape = escape;
+
+    // React Native calls this too for keys it forwards from native.
     window.__doomKey = function (key, code, keyCode, type) {
       syn(key, code, keyCode, type);
     }
 
-    function hijack(e, key, code, keyCode) {
-      e.preventDefault();
-      e.stopImmediatePropagation(); // SDL never sees the original key
-      syn(key, code, keyCode, e.type === 'keyup' ? 'keyup' : 'keydown');
-    }
-
     // Rewind/Fast-forward strafe: Alt held with the matching arrow.
-    function strafe(e, left) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
+    function strafe(left, down) {
       var arrow = left
         ? ['ArrowLeft', 'ArrowLeft', 37]
         : ['ArrowRight', 'ArrowRight', 39];
-      if (e.type === 'keydown') {
+      if (down) {
         syn('Alt', 'AltLeft', 18, 'keydown');
         syn(arrow[0], arrow[1], arrow[2], 'keydown');
       } else {
@@ -136,26 +152,90 @@
         syn('Alt', 'AltLeft', 18, 'keyup');
       }
     }
+    function strafeKey(e, left) {
+      e.preventDefault();
+      e.stopImmediatePropagation(); // SDL never sees the original key
+      strafe(left, e.type === 'keydown');
+    }
+
+    function swallow(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation(); // SDL never sees the original key
+    }
+
+    // Keys acted on without a log line; anything else arriving at the page
+    // is reported so an unmapped remote button can be read out of logcat.
+    var KNOWN = {
+      ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1,
+      Enter: 1, Control: 1, Shift: 1, Alt: 1, Escape: 1, ' ': 1
+    };
 
     function onKey(e) {
       var k = e.key;
       var up = e.type === 'keyup';
       if (k === 'MediaPlayPause' || k === 'MediaStop') {
-        hijack(e, ' ', 'Space', 32);
+        swallow(e);
+        if (!up) { send('map ' + k + ' -> use'); use(); }
         return;
       }
-      if (k === 'MediaRewind') { strafe(e, true); return; }
-      if (k === 'MediaFastForward') { strafe(e, false); return; }
-      if (k === 'ContextMenu' || e.keyCode === 182 || e.keyCode === 93) {
-        hijack(e, 'Escape', 'Escape', 27);
+      if (k === 'MediaRewind') {
+        if (!up) { send('map ' + k + ' -> strafe'); }
+        strafeKey(e, true);
+        return;
+      }
+      if (k === 'MediaFastForward') {
+        if (!up) { send('map ' + k + ' -> strafe'); }
+        strafeKey(e, false);
+        return;
+      }
+      if (k === 'ContextMenu' || k === 'Menu' || k === 'F10' ||
+          e.keyCode === 182 || e.keyCode === 93) {
+        swallow(e);
+        if (!up) { send('map ' + k + ' -> escape'); escape(); }
         return;
       }
       if (k === 'Enter' || e.keyCode === 13) {
         syn('Control', 'ControlLeft', 17, up ? 'keyup' : 'keydown');
+        return;
       }
+      if (KNOWN[k]) { return; }
+      send('key "' + k + '" kc ' + e.keyCode + (up ? ' up' : ''));
     }
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('keyup', onKey, true);
+
+    // Some remotes hand transport buttons to MediaSession instead of the key
+    // pipeline. Claim a session and wire the buttons we care about; a browser
+    // that dislikes an action name reports it and moves on.
+    try {
+      if (navigator.mediaSession && window.MediaMetadata) {
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: 'DOOM', artist: 'id Software', album: 'Shareware'
+        });
+        var session = function (name, fn) {
+          try {
+            navigator.mediaSession.setActionHandler(name, function () {
+              send('ms ' + name);
+              fn();
+            });
+          } catch (err) {
+            send('ms ' + name + ' unsupported: ' + err);
+          }
+        };
+        session('play', use);
+        session('pause', use);
+        session('seekbackward', function () {
+          strafe(true, true);
+          setTimeout(function () { strafe(true, false); }, 140);
+        });
+        session('seekforward', function () {
+          strafe(false, true);
+          setTimeout(function () { strafe(false, false); }, 140);
+        });
+      }
+    } catch (err) {
+      send('mediasession unavailable: ' + err);
+    }
 
     send('shell ready');
   })();
