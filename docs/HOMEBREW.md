@@ -96,6 +96,7 @@ connection is called **ElevSH**:
 
 ```bash
 fyaisa connect --lan          # run on the PC; --lan so the TV can reach it
+fyaisa disconnect             # stop the bridge again when you're done
 ```
 
 The bridge prints:
@@ -251,7 +252,8 @@ The full contract (naming, licensing, catalog fields) is in
 | --- | --- |
 | `vega device list` empty | Developer Mode + ADB debugging ON; re-run `vega exec vda connect <ip>:5555` |
 | FYAISA app shows the fallback catalog | It couldn't fetch `catalog.json` from GitHub — check the stick's internet access |
-| Bridge says "unauthorized — pair first" | The TV's token is stale — re-pair (§5); the app clears it automatically after a 401 |
+| Bridge says "unauthorized — pair first" | A token-protected route was called without a token — pair first (`fyaisa approve <code>`). The FYAISA app probes tokenless `/ping`, so its pairing bootstraps itself |
+| Stop the bridge | `fyaisa disconnect` — graceful `POST /shutdown`, falling back to killing the local process |
 | `fyaisa approve` can't connect | The bridge binds localhost by default — run `fyaisa connect --lan`, or pass `--host 127.0.0.1` |
 | App builds but native calls do nothing | Check the log for `Library '…' not found in any source` — the module isn't declared in `manifest.toml` |
 

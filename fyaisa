@@ -16,6 +16,7 @@
 #                                     start the ElevSH bridge: pair this PC with
 #                                     a Fire TV so the TV app can queue installs
 #                                     and gate which apps may connect (FYAISA)
+#   fyaisa disconnect [--port N]      stop the ElevSH bridge started by connect
 #   fyaisa approve <code>            approve the pairing code shown on the TV
 #
 # Options:
@@ -73,7 +74,7 @@ while [[ $# -gt 0 ]]; do
     --dir)  LOCAL_DIR="$2"; shift 2 ;;
     --ip)   DEVICE_IP="$2"; shift 2 ;;
     --debug) DEBUG=1; shift ;;
-    -h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) break ;;
   esac
 done
@@ -295,6 +296,83 @@ cmd_connect() {
   exec node "${args[@]}"
 }
 
+# ---------------------------------------------------------------------------
+# disconnect — stop a running ElevSH bridge (`fyaisa connect` in another
+# terminal / nohup'd). Asks politely over HTTP first, then falls back to
+# terminating the process for local bridges.
+# ---------------------------------------------------------------------------
+cmd_disconnect() {
+  local port=47821 host=127.0.0.1
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port) port="$2"; shift 2 ;;
+      --host) host="$2"; shift 2 ;;
+      *) die "Unknown option for disconnect: $1" ;;
+    esac
+  done
+  need curl
+  [[ -d "$NODE_BIN" ]] && export PATH="$NODE_BIN:$PATH"
+
+  # Read the token the bridge itself persists (~/.fyaisa/bridge.json) so the
+  # shutdown call authenticates like any other host-tool request. Never printed.
+  local state="$HOME/.fyaisa/bridge.json" token=""
+  if [[ -f "$state" ]]; then
+    token="$(python3 -c 'import json,sys
+try:
+    print(json.load(open(sys.argv[1])).get("token",""))
+except Exception:
+    pass' "$state" 2>/dev/null || true)"
+  fi
+
+  local args=(-sS --max-time 5 -X POST "http://$host:$port/shutdown"
+              -H 'Content-Type: application/json')
+  [[ -n "$token" ]] && args+=(-H "X-FYAISA-Token: $token")
+
+  local out=""
+  if out="$(curl "${args[@]}" 2>&1)" && grep -q '"ok":true' <<<"$out"; then
+    ok "ElevSH bridge on $host:$port stopped."
+    return 0
+  fi
+
+  # HTTP failed (unreachable, stale token, bridge built before /shutdown
+  # existed): for a local bridge, terminate the process directly.
+  case "$host" in
+    127.0.0.1|localhost|::1|"")
+      command -v pgrep >/dev/null 2>&1 ||
+        die "Could not reach the bridge and pgrep is unavailable — stop its terminal (Ctrl+C) instead."
+      local p c keep=""
+      for p in $(pgrep -f 'bridge/bridge\.js' 2>/dev/null || true); do
+        # Never ourselves or our parent: a wrapper shell whose argv echoes
+        # this script's own arguments (e.g. bash -c '… bridge.js --port N …')
+        # matches the pattern too — killing it would take down the terminal
+        # running the disconnect.
+        [[ "$p" == "$$" || "$p" == "$PPID" ]] && continue
+        c="$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null || true)"
+        if [[ "$c" == *"--port "* ]]; then
+          [[ "$c" == *"--port $port"* ]] || continue
+        else
+          # Started without --port: only matches the default port.
+          [[ "$port" == 47821 ]] || continue
+        fi
+        keep+="$p "
+      done
+      if [[ -n "$keep" ]]; then
+        # shellcheck disable=SC2086
+        kill $keep 2>/dev/null || true
+        sleep 1
+        for p in $keep; do kill -9 "$p" 2>/dev/null || true; done
+        ok "ElevSH bridge on port $port stopped."
+        return 0
+      fi
+      warn "No bridge is running on $host:$port."
+      return 0
+      ;;
+    *)
+      die "Could not reach the bridge at $host:$port (${out:-no response})"
+      ;;
+  esac
+}
+
 cmd_approve() {
   local code="${1:-}" port=47821 host=127.0.0.1
   shift || true
@@ -343,6 +421,7 @@ main() {
     devices) cmd_devices ;;
     approve) cmd_approve "$@" ;;
     connect) cmd_connect "$@" ;;
+    disconnect) cmd_disconnect "$@" ;;
     *) die "Unknown command: $CMD  (try: fyaisa --help)" ;;
   esac
 }

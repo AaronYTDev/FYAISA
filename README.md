@@ -77,6 +77,16 @@ fyaisa connect --lan
     reachable http://192.168.12.102:47821
 ```
 
+Stop the bridge from any terminal when you're done:
+
+```bash
+fyaisa disconnect
+```
+
+It asks the bridge to shut down over HTTP first (`POST /shutdown`) and falls
+back to stopping the local process directly if that fails (add `--port N` if
+the bridge isn't on the default port).
+
 Then on the TV: **FYAISA → Connect** → type the PC address with the D-pad
 keypad (`192`, `.`, …) → **Get pairing code**. The 6-digit code appears on the
 TV *and* in the bridge's terminal — approve it **on the PC**:
@@ -154,7 +164,7 @@ repo's Releases page; the catalog's `install` block describes how to get one.
 | Component | State |
 | --- | --- |
 | `fyaisa` CLI | Working — list / search / info / install / update / uninstall / devices / connect / approve |
-| `fyaisa connect` bridge (ElevSH) | Working — pairing (PC or FYAISA approval, auto-approve for allowed apps), token auth, per-app allow/deny managed from FYAISA, real end-to-end installs, and `POST /vega` (allowlisted CLI access for homebrew apps), all verified on a Fire TV Stick HD |
+| `fyaisa connect` bridge (ElevSH) | Working — pairing (PC or FYAISA approval, auto-approve for allowed apps), token auth, per-app allow/deny managed from FYAISA, real end-to-end installs, `POST /vega` (allowlisted CLI access for homebrew apps), and `fyaisa disconnect` to stop it, all verified on a Fire TV Stick HD |
 | Catalog | `catalog.json` schema v1, served from this repo |
 | FYAISA app | Working on a Fire TV Stick HD — live catalog fetch, pairing that persists across restarts/reboots/upgrades, Install via ElevSH (build log streams back to the TV), and an ElevSH screen that allows/denies other apps |
 | Apps | 1 (`app.vegatube.main` — VegaTube) |

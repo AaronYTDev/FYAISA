@@ -29,6 +29,15 @@ fyaisa connect --lan          # from the repo root
 node bridge/bridge.js --lan --hub-dir ~/FYAISA
 ```
 
+Stop it with:
+
+```bash
+fyaisa disconnect
+```
+
+which calls `POST /shutdown` (token; hub app or headerless host tools only)
+and falls back to terminating the local bridge process if HTTP fails.
+
 When the TV app requests a pairing code, approve it either on the PC:
 
 ```bash
@@ -66,6 +75,7 @@ Options:
 | `POST` | `/access` | token (FYAISA) | `{appId, decision: allow \| deny \| revoke}` |
 | `POST` | `/launch` | token | `{appId}` launch an app on the device |
 | `POST` | `/vega` | token | run an **allowlisted** `vega` CLI command on the PC |
+| `POST` | `/shutdown` | token (hub/host tools) | stop the bridge — what `fyaisa disconnect` calls |
 
 Auth is `X-FYAISA-Token: <token>` compared with `crypto.timingSafeEqual`.
 

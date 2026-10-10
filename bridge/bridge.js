@@ -18,6 +18,8 @@
  *   - A 6-digit pairing code must be exchanged before any job is accepted.
  *   - After pairing, every request needs `X-FYAISA-Token`.
  *   - Tokens are random, stored in the state file, and never logged.
+ *   - POST /shutdown stops the bridge (token + hub/host tools only) — this is
+ *     what `fyaisa disconnect` calls.
  *   - Apps that identify themselves with `X-FYAISA-App: <app-id>` are gated:
  *     FYAISA (the owner app) allows or denies each app id from the ElevSH
  *     screen; unknown ids get a pending 403 until approved. Requests without
@@ -424,6 +426,21 @@ const server = http.createServer(async (req, res) => {
 
   // ---- everything below requires the token ----
   if (!authorized(req)) return json(res, 401, { error: 'unauthorized — pair first' });
+
+  // Stop the bridge (`fyaisa disconnect`). Same token as every other call, but
+  // a paired homebrew app must not be able to pull the bridge out from under
+  // everyone — so only the hub app or a headerless host tool may use it.
+  if (path_ === '/shutdown' && req.method === 'POST') {
+    const h = req.headers['x-fyaisa-app'];
+    if (typeof h === 'string' && h !== OWNER_APP) {
+      return json(res, 403, { error: 'only the hub or host tools may stop the bridge', code: 'access_denied' });
+    }
+    json(res, 200, { ok: true, stopping: true });
+    log('shutdown requested (fyaisa disconnect)');
+    setTimeout(() => process.exit(0), 200); // let the response flush first
+    return;
+  }
+
   if (!appGate(req, res)) return;
 
   // Pending app pairing requests — shown on the FYAISA ElevSH screen so the
