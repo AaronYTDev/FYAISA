@@ -1,3 +1,6 @@
+# fyaisa-apps (FYAISA App Library)
+The homebrew apps. Because FYAISA would be useless without them.
+
 
 ## App format
 
