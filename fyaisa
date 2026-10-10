@@ -43,6 +43,7 @@ done
 SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 REPO_URL="https://github.com/AaronYTDev/FYAISA"
 LOCAL_DIR="${FYAISA_DIR:-$SCRIPT_DIR}"
+STATE_DIR="$HOME/.fyaisa" # shared with the bridge (bridge.json lives here)
 DEVICE_IP=""
 BUILD_TYPE="Release"
 DEBUG=0
@@ -160,15 +161,27 @@ print('' if a is None else a.get(field,''))" "$1" "$2"
 app_path() { app_field "$1" path; }
 
 # --- device ------------------------------------------------------------------
+# `vega device …` needs a live vda link, and that link drops whenever the
+# stick sleeps. So reconnect on every lookup: to --ip when one was given,
+# else to the last address we saw (saved in ~/.fyaisa/last-device). Without
+# the saved address an install straight after the TV wakes dies with
+# "device offline" even though the Fire TV is right there.
 device_targets() {
+  local addrs saved
   if [[ -n "$DEVICE_IP" ]]; then
     vega exec vda connect "$DEVICE_IP" >/dev/null 2>&1
   fi
-  local addrs
   addrs="$(vega device list 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+')"
-  if [[ -z "$addrs" ]]; then
-    vega exec vda connect "${DEVICE_IP:-}" >/dev/null 2>&1
-    addrs="$(vega device list 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+')"
+  if [[ -z "$addrs" && -z "$DEVICE_IP" ]]; then
+    saved="$(cat "$STATE_DIR/last-device" 2>/dev/null || true)"
+    if [[ -n "$saved" ]]; then
+      vega exec vda connect "$saved" >/dev/null 2>&1
+      addrs="$(vega device list 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]+')"
+    fi
+  fi
+  if [[ -n "$addrs" ]]; then
+    mkdir -p "$STATE_DIR"
+    printf '%s\n' "$addrs" | head -n1 > "$STATE_DIR/last-device"
   fi
   printf '%s' "$addrs"
 }

@@ -120,6 +120,17 @@ function run(cmd, args, cwd, onLog) {
   });
 }
 
+// The TV that made a request, as a plain IPv4: the host `vega exec vda
+// connect` needs for device commands to reach it. Loopback and anything
+// that isn't IPv4 means we don't know the TV (e.g. a PC-side curl), so
+// callers just skip the reconnect.
+function clientIpOf(req) {
+  const raw = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(raw)) return '';
+  if (raw.startsWith('127.') || raw === '0.0.0.0') return '';
+  return raw;
+}
+
 async function installApp(appId, job, opts = {}) {
   const catalog = readCatalog();
   const app = (catalog.apps || []).find((a) => a.id === appId);
@@ -133,6 +144,18 @@ async function installApp(appId, job, opts = {}) {
     job.status = 'error';
     job.log.push(`App source missing: ${dir}`);
     return;
+  }
+
+  // ---- reconnect vda ---------------------------------------------------------
+  // The TV is talking to us, so it is on the network — but the PC-side vda
+  // link goes stale whenever the stick sleeps, and without it every
+  // `vega device …` below dies with "device offline". Connect to the
+  // requesting TV first; best-effort, since the link may already be up.
+  if (opts.deviceIp) {
+    job.log.push(`Ensuring vda is connected to ${opts.deviceIp}:5555…`);
+    await run('vega', ['exec', 'vda', 'connect', `${opts.deviceIp}:5555`], HOST_DIR, (l) =>
+      job.log.push(l),
+    );
   }
 
   // ---- patch install ------------------------------------------------------
@@ -592,7 +615,7 @@ const server = http.createServer(async (req, res) => {
       job.log.push(l);
       if (job.log.length > 200) job.log.shift();
     };
-    installApp(appId, job, { patch: wantPatch })
+    installApp(appId, job, { patch: wantPatch, deviceIp: clientIpOf(req) })
       .catch((e) => {
         job.status = 'error';
         push(`internal error: ${e.message}`);
