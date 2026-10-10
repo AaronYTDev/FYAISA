@@ -142,6 +142,14 @@ const FALLBACK_CATALOG: Catalog = {
       tags: ['youtube', 'adblock', 'sponsorblock'],
       status: 'stable',
     },
+    {
+      id: 'app.fyaisa.files.main',
+      name: 'ElevSH Files',
+      summary: 'D-pad file explorer for your Fire TV, driven over the ElevSH bridge.',
+      license: 'GPL-3.0-only',
+      tags: ['files', 'explorer', 'elevsh'],
+      status: 'stable',
+    },
   ],
 };
 
@@ -378,7 +386,9 @@ export const App = () => {
     }
   }, [base, bridgeFetch]);
 
-  /** Queue a build+install over ElevSH and poll the job. */
+  /**
+   * Queue a build+install over ElevSH and poll the job.
+   */
   const requestInstall = useCallback(
     async (appId: string) => {
       try {
@@ -386,7 +396,11 @@ export const App = () => {
           method: 'POST',
           body: JSON.stringify({appId}),
         });
-        setPair(p => ({...p, job: {id: jobId, status: 'queued', log: []}, message: `Installing ${appId}…`}));
+        setPair(p => ({
+          ...p,
+          job: {id: jobId, status: 'queued', log: []},
+          message: `Installing ${appId}…`,
+        }));
         const iv = setInterval(async () => {
           try {
             const job = await bridgeFetch(`/job?id=${jobId}`);
@@ -483,14 +497,61 @@ export const App = () => {
   // crashed the app with "ReferenceError: Property 'document' doesn't exist").
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (selectedId) {
-        setSelectedId(null);
-        return true;
+      if (selectedId === null) return false; // main menu → let the OS close us
+      if (selectedId.startsWith('__')) {
+        setSelectedId(null); // any submenu → main menu
+      } else {
+        setSelectedId('__apps__'); // app detail → the Apps list
       }
-      return false;
+      return true;
     });
     return () => sub.remove();
   }, [selectedId]);
+
+  // Main menu: submenus (Apps / ElevSH) hang off this screen.
+  if (selectedId === null) {
+    const submenus = [
+      {
+        id: '__apps__',
+        title: 'Apps',
+        summary: `Browse the catalog — ${apps.length} app${apps.length === 1 ? '' : 's'}${loading ? ' (loading…)' : ''}`,
+      },
+      {
+        id: '__connect__',
+        title: 'ElevSH',
+        summary:
+          pair.status === 'paired'
+            ? `Connected to ${pair.host} — pairing, access & installs`
+            : `Pair this TV with your PC — ${pair.message}`,
+      },
+    ];
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <Text style={styles.brand}>{catalog?.hub?.name ?? 'FYAISA'}</Text>
+          {catalog?.hub?.tagline ? <Text style={styles.tagline}>{catalog.hub.tagline}</Text> : null}
+        </View>
+        <ScrollView contentContainerStyle={styles.list}>
+          {submenus.map((m, i) => (
+            <Pressable
+              key={m.id}
+              hasTVPreferredFocus={i === 0}
+              focusable
+              style={({focused}) => [styles.row, focused && styles.rowFocused, focused && styles.focused]}
+              onPress={() => setSelectedId(m.id)}>
+              <View style={styles.rowMain}>
+                <Text style={styles.rowTitle}>{m.title}</Text>
+                <Text style={styles.rowSummary} numberOfLines={2}>
+                  {m.summary}
+                </Text>
+              </View>
+              <Text style={styles.chevron}>›</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }
 
   // Connect screen.
   if (selectedId === '__connect__') {
@@ -739,7 +800,7 @@ export const App = () => {
             <Text style={styles.howtoBody}>Hub: {HUB_URL}</Text>
           </View>
 
-          <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
+          <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId('__apps__')}>
             <Text style={styles.backText}>Back to catalog</Text>
           </Pressable>
         </ScrollView>
@@ -747,25 +808,12 @@ export const App = () => {
     );
   }
 
-  // List view.
+  // Apps submenu (fall-through: every other view returns above).
   return (
     <View style={styles.wrap}>
       <View style={styles.header}>
         <Text style={styles.brand}>{catalog?.hub?.name ?? 'FYAISA'}</Text>
         {catalog?.hub?.tagline ? <Text style={styles.tagline}>{catalog.hub.tagline}</Text> : null}
-      </View>
-
-      <View style={styles.connectBar}>
-        <Pressable
-          hasTVPreferredFocus
-          style={focusable(styles.connectBtn)}
-          onPress={() => setSelectedId('__connect__')}>
-          <Text style={styles.connectText}>
-            {pair.status === 'paired'
-              ? `ElevSH: ${pair.host} (connected)`
-              : `ElevSH — ${pair.message}`}
-          </Text>
-        </Pressable>
       </View>
 
       {loading ? (
@@ -841,6 +889,7 @@ const styles = StyleSheet.create({
   rowId: {color: '#6f6f80', fontSize: 13, marginTop: 2},
   rowSummary: {color: '#b9b9c6', fontSize: 15, marginTop: 6},
   dot: {width: 12, height: 12, borderRadius: 6},
+  chevron: {color: '#6f6f80', fontSize: 30, fontWeight: '600'},
   detailWrap: {flex: 1, backgroundColor: '#0b0b0f'},
   detail: {padding: 40, paddingBottom: 60},
   detailTitle: {color: '#fff', fontSize: 38, fontWeight: '700'},
@@ -885,16 +934,6 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   backText: {color: '#fff', fontSize: 18},
-  connectBar: {paddingHorizontal: 40, paddingBottom: 4},
-  connectBtn: {
-    backgroundColor: '#1c2733',
-    borderRadius: 8,
-    borderWidth: 4,
-    borderColor: '#2d4a63',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-  },
-  connectText: {color: '#9fd0ff', fontSize: 16},
   card: {
     backgroundColor: '#16161d',
     borderRadius: 10,

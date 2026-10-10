@@ -1,0 +1,38 @@
+schema-version = 1
+
+[package]
+title = "ElevSH Files"
+version = "1.0.0"
+id = "app.fyaisa.files"
+
+# Vega OS 1.2 is the only version the current SDK mints. For firmware still on
+# 1.1 use SDK 0.23.9221 and set min/target to "1.1" with IVega_1_1.
+[os.version]
+min = "1.2"
+target = "1.2"
+
+[needs]
+[[needs.module]]
+id = "/com.amazon.vega.os@IVega_1_2"
+
+[[needs.module]]
+id = "/com.amazon.kepler.keplerscript_4@IKeplerScript_0"
+
+# KeplerFileSystem — pairing persistence (/data/bridge.json).
+[[needs.module]]
+id = "/com.amazon.kepler.kepler_file_system_0@IKeplerFileSystem_0"
+
+
+
+
+[components]
+[[components.interactive]]
+id = "app.fyaisa.files.main"
+runtime-module = "/com.amazon.kepler.runtime.react_native_kepler_4@IReactNativeKepler_0"
+launch-type = "singleton"
+categories = ["com.amazon.category.main"]
+
+[wants]
+# Every filesystem read goes out over the local network (ElevSH bridge).
+[[wants.service]]
+id = "com.amazon.network.service"

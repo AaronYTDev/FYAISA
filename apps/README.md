@@ -6,6 +6,10 @@
 #### ReisXD - Original TizenTube
 #### FYAISA - pairing API, hub and example-app integration
 
+## ElevSH Files
+#### aaronYTDev - ElevSH Files, the D-pad browsing UX
+#### FYAISA - pairing API, ElevSH bridge and vendored fyaisaClient.ts
+
 ---
 
 ## App format

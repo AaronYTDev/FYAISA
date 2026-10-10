@@ -53,6 +53,44 @@
         "The FYAISA example app: pair with your PC for the in-app update menu, or use `fyaisa update app.vegatube.main`.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
+    },
+    {
+      "id": "app.fyaisa.files.main",
+      "name": "ElevSH Files",
+      "summary": "Browse your Fire TV's real filesystem with the D-pad, over ElevSH.",
+      "description": "The app itself is sandboxed, so it reaches the real device filesystem the long way round: every directory listing and file preview is a `vega device run-cmd` on your paired PC, sent through the bridge's allowlisted /vega endpoint (no shell on the PC, output capped, timeout enforced). Pair once, then navigate /var, /data and the rest with nothing but the remote.",
+      "path": "apps/fileexplorer",
+      "license": "GPL-3.0-only",
+      "author": "AaronYTDev",
+      "homepage": "https://github.com/AaronYTDev/FYAISA",
+      "minOsVersion": "1.2",
+      "targetOsVersion": "1.2",
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "files",
+        "explorer",
+        "elevsh",
+        "file manager"
+      ],
+      "containsAds": false,
+      "requiresNetwork": true,
+      "drm": false,
+      "status": "stable",
+      "version": "1.0.0",
+      "updated": "2026-10-09",
+      "install": {
+        "kind": "vpkg-release",
+        "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/fileexplorer with the Vega SDK."
+      },
+      "notes": [
+        "Pairs with ElevSH like every FYAISA app \u2014 approve it in FYAISA \u2192 ElevSH or with `fyaisa approve <code>`.",
+        "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ]
     }
   ]
 }

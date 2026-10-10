@@ -22,6 +22,7 @@ FYAISA/
 ├── fyaisa                    # host CLI: list / search / build / install / connect / approve
 ├── apps/
 │   ├── README.md             # the app format (contract for contributors)
+│   ├── fileexplorer/          # ElevSH Files — D-pad file browser over ElevSH
 │   └── vegatube/              # reference app — VegaTube (ad-free YouTube)
 ├── bridge/
 │   ├── bridge.js             # ElevSH bridge: pairing + installs + access gate
@@ -167,7 +168,7 @@ repo's Releases page; the catalog's `install` block describes how to get one.
 | `fyaisa connect` bridge (ElevSH) | Working — pairing (PC or FYAISA approval, auto-approve for allowed apps), token auth, per-app allow/deny managed from FYAISA, real end-to-end installs, `POST /vega` (allowlisted CLI access for homebrew apps), and `fyaisa disconnect` to stop it, all verified on a Fire TV Stick HD |
 | Catalog | `catalog.json` schema v1, served from this repo |
 | FYAISA app | Working on a Fire TV Stick HD — live catalog fetch, pairing that persists across restarts/reboots/upgrades, Install via ElevSH (build log streams back to the TV), and an ElevSH screen that allows/denies other apps |
-| Apps | 1 (`app.vegatube.main` — VegaTube) |
+| Apps | 2 (`app.vegatube.main` — VegaTube; `app.fyaisa.files.main` — ElevSH Files, the file explorer) |
 
 ## Not affiliated with Amazon or Google
 
