@@ -1,6 +1,6 @@
 # FYAISA
 ## (Pronounced Fee-eye-sha)
-A community hub for sideloaded homebrew on Amazon's Vega OS Fire TV devices.
+The one-stop homebrew shop for Vega OS devices.
 
 With a CLI for installing, and an on-device app.
 Designed by **aaronYTDev**.
