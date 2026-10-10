@@ -19,6 +19,7 @@ FYAISA/
 ├── fyaisa                    # host CLI: list / search / build / install / connect / approve
 ├── apps/
 │   ├── README.md             # the app format (contract for contributors)
+│   ├── doom/                 # DOOM shareware, compiled to WebAssembly
 │   ├── fileexplorer/          # ElevSH Files, a D-pad file browser over ElevSH
 │   ├── snake/                 # Snake, a D-pad snake game that runs offline
 │   └── vegatube/              # reference app: VegaTube (ad-free YouTube)
@@ -162,7 +163,7 @@ Releases page; the catalog's `install` block describes how to get one.
 | `fyaisa connect` bridge (ElevSH) | pairing (PC or FYAISA approval), token auth, per-app allow/deny, installs, `POST /vega`, `fyaisa disconnect` |
 | Catalog | `catalog.json` schema v1, served from this repo |
 | FYAISA app | works on a Fire TV Stick HD: live catalog with search, persistent pairing, Install via ElevSH, ElevSH allow/deny screen |
-| Apps | 3: `app.vegatube.main` (VegaTube), `app.fyaisa.files.main` (ElevSH Files, the file explorer), `app.snake.main` (Snake, offline) |
+| Apps | 4: `app.vegatube.main` (VegaTube), `app.fyaisa.files.main` (ElevSH Files, the file explorer), `app.snake.main` (Snake, offline), `app.doom.main` (DOOM shareware, offline) |
 
 ## Not affiliated with Amazon or Google
 

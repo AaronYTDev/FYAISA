@@ -128,6 +128,45 @@
         "No pairing needed — it never talks to your PC or the network.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
+    },
+    {
+      "id": "app.doom.main",
+      "name": "DOOM (Shareware)",
+      "summary": "id Software's DOOM Episode One, compiled to WebAssembly, running fully offline on your Fire TV.",
+      "description": "The original DOOM engine, built from doomgeneric with emscripten, rendered to a canvas inside a Vega WebView with id's shareware episode embedded in the package. The D-pad walks and turns, OK fires and selects, Back opens doors and switches, Home exits. Nothing is fetched after install: engine, game data and loader all ship in the app. No sound yet, and config or saves reset on exit.",
+      "path": "apps/doom",
+      "license": "GPL-3.0-only",
+      "author": "AaronYTDev",
+      "homepage": "https://github.com/AaronYTDev/FYAISA",
+      "minOsVersion": "1.2",
+      "targetOsVersion": "1.2",
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "game",
+        "doom",
+        "wasm",
+        "offline"
+      ],
+      "containsAds": false,
+      "requiresNetwork": false,
+      "drm": false,
+      "status": "beta",
+      "version": "1.0.0",
+      "updated": "2026-10-10",
+      "install": {
+        "kind": "vpkg-release",
+        "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/doom with the Vega SDK."
+      },
+      "notes": [
+        "Runs offline: the engine, the shareware episode data and the loader are inside the app.",
+        "Silent for now, and config or saves do not survive leaving the app.",
+        "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ]
     }
   ]
 }

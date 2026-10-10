@@ -287,6 +287,16 @@ The full contract (naming, licensing, catalog fields) is in
     `'down'`, `'left'`, `'right'` and `'select'`. A remote can fire the same
     key twice (keydown + keyup), so make repeats harmless — see the direction
     queue and the select debounce in `apps/snake/src/App.tsx`.
+11. Vega WebView apps: `source` only accepts `uri` (the `html` object from
+    react-native-webview is not in Amazon's supported API), so local pages
+    live in an `assets/` folder at the project root and load as
+    `file:///pkg/assets/page.html` with no `allowFileAccess` needed. The
+    bridge also silently drops oversized `injectJavaScript` payloads: ship
+    big scripts in 16 KB order-independent chunks that the page reassembles,
+    as VegaTube does. With `allowSystemKeyEvents` on, every key reaches the
+    page but Back reaches nobody; off, arrows and Enter still reach the page
+    and Back arrives at `BackHandler`. `apps/doom` uses all three facts:
+    asset page, chunked payload, Back forwarded into the page as the Use key.
 
 ## Troubleshooting
 

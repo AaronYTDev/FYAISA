@@ -1,0 +1,7 @@
+# engine build intermediates (src/doomPayload.js is the committed output)
+obj/
+doom.js
+doom_headless.js
+doom_headless.data
+doomgeneric/
+*.o

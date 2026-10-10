@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #canvas { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+            image-rendering: pixelated; }
+  #loader { position: fixed; inset: 0; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; background: #000;
+            color: #c6c6c6; font: 20px sans-serif; z-index: 10; text-align: center; }
+  #bar { margin-top: 14px; width: 260px; height: 6px; background: #333; }
+  #fill { height: 100%; width: 0; background: #d32f2f; }
+</style>
+</head>
+<body>
+  <canvas id="canvas" width="640" height="400"></canvas>
+  <div id="loader">Loading DOOM...<div id="bar"><div id="fill"></div></div></div>
+  <script>
+  (function () {
+    var canvas = document.getElementById('canvas');
+
+    // Letterbox the 640x400 framebuffer on whatever screen we get.
+    function fit() {
+      var s = Math.min(window.innerWidth / 640, window.innerHeight / 400);
+      canvas.style.width = Math.floor(640 * s) + 'px';
+      canvas.style.height = Math.floor(400 * s) + 'px';
+    }
+    window.addEventListener('resize', fit);
+    fit();
+
+    // Forward engine startup lines to the RN console.
+    function send(msg) {
+      try {
+        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
+          JSON.stringify({type: 'DOOM_LOG', message: String(msg)}));
+      } catch (e) {}
+    }
+
+    // Emscripten reads this global at startup; SDL2 draws into canvas.
+    window.Module = {
+      canvas: canvas,
+      print: function (t) { send(t); },
+      printErr: function (t) { send('[err] ' + t); }
+    };
+
+    // Chunk assembly: order-independent, each slice stores itself and counts,
+    // the full set triggers the boot (same pattern as VegaTube's injection).
+    var state = {parts: {}, n: 0, total: 0, done: false};
+    window.__doomPush = function (i, total, s) {
+      if (state.done || state.parts[i] !== undefined) { return; }
+      state.parts[i] = s;
+      state.total = total;
+      state.n++;
+      var fill = document.getElementById('fill');
+      if (fill) { fill.style.width = Math.floor((100 * state.n) / total) + '%'; }
+      if (state.n === total) { boot(); }
+    };
+
+    function boot() {
+      state.done = true;
+      try {
+        var joined = '';
+        for (var i = 0; i < state.total; i++) { joined += state.parts[i]; }
+        state.parts = null;
+        // base64 -> bytes -> UTF-8 text. The emscripten bundle encodes its
+        // inline wasm as UTF-8 text, so the decode has to match what a browser
+        // does reading the file as a script; Latin-1 corrupts the wasm.
+        var bytes = Uint8Array.from(atob(joined), function (c) {
+          return c.charCodeAt(0);
+        });
+        var src = new TextDecoder('utf-8').decode(bytes);
+        send('booting the engine, ' + Math.round(src.length / 1024) + ' KB');
+        (0, eval)(src);
+      } catch (e) {
+        // Only decode/eval failures are the engine's fault; the steps after
+        // this point are cosmetic and get their own guard.
+        send('boot failed: ' + e);
+        var l = document.getElementById('loader');
+        if (l) { l.textContent = 'DOOM failed to start: ' + e; }
+        return;
+      }
+      document.getElementById('loader').style.display = 'none';
+      fit();
+      try {
+        // Shift stays held from the first frame: arrows always run.
+        syn('Shift', 'ShiftLeft', 16, 'keydown');
+      } catch (e) {}
+      send('running');
+    }
+
+    // Remote key shim. Media buttons arrive with DOM keyCode 0 and Menu with
+    // codes SDL2 does not know, so normalize them before SDL's listener runs.
+    // OK sends Ctrl with Enter: DOOM fires on Ctrl and ignores Enter in play,
+    // selects on Enter and ignores Ctrl in menus, so one button does both.
+    function syn(key, code, keyCode, type) {
+      var ev;
+      try {
+        ev = new KeyboardEvent(type, {
+          key: key, code: code, keyCode: keyCode, which: keyCode,
+          bubbles: true, cancelable: true
+        });
+        // Some engines ignore keyCode in the init dict; force it.
+        Object.defineProperty(ev, 'keyCode', {get: function () { return keyCode; }});
+        Object.defineProperty(ev, 'which', {get: function () { return keyCode; }});
+      } catch (e) { return; }
+      // Dispatch at the canvas so listeners at canvas, document and window
+      // all see the event on its way up.
+      canvas.dispatchEvent(ev);
+    }
+
+    // React Native calls this too: Back is the Use key, injected from native.
+    window.__doomKey = function (key, code, keyCode, type) {
+      syn(key, code, keyCode, type);
+    }
+
+    function hijack(e, key, code, keyCode) {
+      e.preventDefault();
+      e.stopImmediatePropagation(); // SDL never sees the original key
+      syn(key, code, keyCode, e.type === 'keyup' ? 'keyup' : 'keydown');
+    }
+
+    // Rewind/Fast-forward strafe: Alt held with the matching arrow.
+    function strafe(e, left) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      var arrow = left
+        ? ['ArrowLeft', 'ArrowLeft', 37]
+        : ['ArrowRight', 'ArrowRight', 39];
+      if (e.type === 'keydown') {
+        syn('Alt', 'AltLeft', 18, 'keydown');
+        syn(arrow[0], arrow[1], arrow[2], 'keydown');
+      } else {
+        syn(arrow[0], arrow[1], arrow[2], 'keyup');
+        syn('Alt', 'AltLeft', 18, 'keyup');
+      }
+    }
+
+    function onKey(e) {
+      var k = e.key;
+      var up = e.type === 'keyup';
+      if (k === 'MediaPlayPause' || k === 'MediaStop') {
+        hijack(e, ' ', 'Space', 32);
+        return;
+      }
+      if (k === 'MediaRewind') { strafe(e, true); return; }
+      if (k === 'MediaFastForward') { strafe(e, false); return; }
+      if (k === 'ContextMenu' || e.keyCode === 182 || e.keyCode === 93) {
+        hijack(e, 'Escape', 'Escape', 27);
+        return;
+      }
+      if (k === 'Enter' || e.keyCode === 13) {
+        syn('Control', 'ControlLeft', 17, up ? 'keyup' : 'keydown');
+      }
+    }
+    window.addEventListener('keydown', onKey, true);
+    window.addEventListener('keyup', onKey, true);
+
+    send('shell ready');
+  })();
+  </script>
+</body>
+</html>

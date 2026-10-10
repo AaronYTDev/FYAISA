@@ -1,0 +1,42 @@
+schema-version = 1
+
+[package]
+title = "DOOM"
+version = "1.0.0"
+id = "app.doom"
+
+# Vega OS 1.2 is the only version the current SDK mints. For firmware still on
+# 1.1 use SDK 0.23.9221 and set min/target to "1.1" with IVega_1_1.
+[os.version]
+min = "1.2"
+target = "1.2"
+
+[needs]
+[[needs.module]]
+id = "/com.amazon.vega.os@IVega_1_2"
+
+[[needs.module]]
+id = "/com.amazon.kepler.keplerscript_4@IKeplerScript_0"
+
+# The game renders to a canvas inside a Vega WebView, same as VegaTube.
+[[needs.module]]
+id = "/com.amazon.kepler.webview_4@IWebview_4"
+
+
+
+
+[components]
+[[components.interactive]]
+id = "app.doom.main"
+runtime-module = "/com.amazon.kepler.runtime.react_native_kepler_4@IReactNativeKepler_0"
+launch-type = "singleton"
+categories = ["com.amazon.category.main"]
+
+[wants]
+# Web renderer service for rendering web content
+[[wants.service]]
+id = "com.amazon.webview.renderer_service"
+
+# D-pad and remote keys must reach the page
+[[wants.service]]
+id = "com.amazon.inputmethod.service"

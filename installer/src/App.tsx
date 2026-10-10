@@ -151,6 +151,15 @@ const FALLBACK_CATALOG: Catalog = {
       tags: ['game', 'snake', 'offline'],
       status: 'stable',
     },
+    {
+      id: 'app.doom.main',
+      name: 'DOOM (Shareware)',
+      summary:
+        "id Software's DOOM Episode One, compiled to WebAssembly, running fully offline on your Fire TV.",
+      license: 'GPL-3.0-only',
+      tags: ['game', 'doom', 'wasm', 'offline'],
+      status: 'beta',
+    },
   ],
 };
 
