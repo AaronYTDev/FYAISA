@@ -38,8 +38,8 @@ The pairing is remembered (across restarts and reboots). D-pad navigation:
 ## Themes
 
 Ported from the hub: pick one of the 8 presets, or dial in your own accent,
-background and panel colours plus button style and animated background effect.
-Everything persists on the TV (`/data/theme.json`). Open the picker from the
+background, panel and focus-ring colours plus button style and animated
+background effect. Everything persists on the TV (`/data/theme.json`). Open the picker from the
 **Themes…** row while browsing, or from "Step 4 — make it yours" on the
 pairing screen; Back closes it. App logos and tile art are never restyled.
 
