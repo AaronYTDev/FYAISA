@@ -150,9 +150,11 @@ The bridge prints:
 
 Full walkthrough:
 
-1. **On the TV:** open **FYAISA → ElevSH** → enter the PC's IP with the D-pad
-   keypad → **Get pairing code**. The TV requests a code from the bridge and
-   displays it.
+1. **On the TV:** open **FYAISA → ElevSH** → **Discover ElevSH on this PC**.
+   With `--lan` the bridge opens a reverse tunnel over the vda link, so the hub
+   finds it on the TV's own loopback — no IP to type. (The keypad is still
+   there if you'd rather enter the PC's address by hand.) Press
+   **Get pairing code**; the TV requests a code from the bridge and displays it.
 2. **On the PC:** the same code is printed by the bridge. Approve it:
 
    ```bash
@@ -164,8 +166,10 @@ Full walkthrough:
    reinstalls of the app (it lives in the app's private `/data`), so you only
    do this once per PC.
 
-Useful flags: `--port N` (change 47821), `--tunnel` (prints cloudflared/ngrok
-commands for internet access, though LAN is the intended mode), `--hub-dir <path>`.
+Useful flags: `--port N` (change 47821), `--no-forward` (skip the discovery
+tunnel and enter the PC's address by hand instead), `--tunnel` (prints
+cloudflared/ngrok commands for internet access, though LAN is the intended
+mode), `--hub-dir <path>`.
 If the token ever goes stale (e.g. you deleted `~/.fyaisa/bridge.json`), the
 app detects the 401 on its next launch and asks you to re-pair; the **Forget
 ElevSH pairing** button clears it manually.

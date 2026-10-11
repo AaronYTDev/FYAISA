@@ -13,10 +13,12 @@
 #   fyaisa uninstall <app-id>        remove from the device
 #   fyaisa add-app <name>            scaffold a new app from a template
 #   fyaisa devices                   list Fire TVs visible to the Vega CLI
-#   fyaisa connect [--lan] [--port N] [--tunnel]
+#   fyaisa connect [--lan] [--port N] [--tunnel] [--no-forward]
 #                                     start the ElevSH bridge: pair this PC with
 #                                     a Fire TV so the TV app can queue installs
-#                                     and gate which apps may connect (FYAISA)
+#                                     and gate which apps may connect (FYAISA).
+#                                     --lan also reverse-tunnels the port so the
+#                                     hub can Discover this PC with no IP to type
 #   fyaisa disconnect [--port N]      stop the ElevSH bridge started by connect
 #   fyaisa approve <code>            approve the pairing code shown on the TV
 #
@@ -81,7 +83,7 @@ while [[ $# -gt 0 ]]; do
     --dir)  LOCAL_DIR="$2"; shift 2 ;;
     --ip)   DEVICE_IP="$2"; shift 2 ;;
     --debug) DEBUG=1; shift ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) break ;;
   esac
 done
@@ -387,15 +389,43 @@ cmd_uninstall() {
 }
 
 # ---------------------------------------------------------------------------
+# ElevSH discovery tunnel
+#
+# `vega device start-port-forwarding --forward false` is a reverse forward: it
+# makes the bridge reachable on the Fire TV's own loopback over the existing
+# vda link. That is what lets the hub's "Discover" button find this PC with
+# nothing to type. It needs a Fire TV the Vega CLI can see, so it is
+# best-effort — without one the manual address box still works.
+# ---------------------------------------------------------------------------
+start_reverse_forward() {
+  local port="$1"
+  command -v vega >/dev/null 2>&1 || return 1
+  # Reverse forward: the Fire TV reaches this PC on 127.0.0.1:<port>. Re-running
+  # is harmless (it just replaces the entry).
+  if vega device start-port-forwarding --port "$port" --forward false >/dev/null 2>&1; then
+    return 0
+  fi
+  # It may refuse because the forward already exists; that still counts.
+  vega device is-port-forwarded --port "$port" --forward false >/dev/null 2>&1
+}
+
+stop_reverse_forward() {
+  local port="$1"
+  command -v vega >/dev/null 2>&1 || return 0
+  vega device stop-port-forwarding --port "$port" --forward false >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
 # connect — pair a Fire TV with this PC so the TV can queue installs
 # ---------------------------------------------------------------------------
 cmd_connect() {
-  local port=47821 lan=0 tunnel=0
+  local port=47821 lan=0 tunnel=0 no_forward=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --port)   port="$2"; shift 2 ;;
       --lan)    lan=1; shift ;;
       --tunnel) tunnel=1; shift ;;
+      --no-forward) no_forward=1; shift ;;
       --hub)    LOCAL_DIR="$2"; shift 2 ;;
       *) die "Unknown option for connect: $1" ;;
     esac
@@ -417,6 +447,22 @@ cmd_connect() {
 
   if [[ ! -f "$LOCAL_DIR/bridge/bridge.js" ]]; then
     die "Bridge not found at $LOCAL_DIR/bridge/bridge.js"
+  fi
+
+  # Reverse-tunnel the port so the Fire TV can reach the bridge on its own
+  # loopback, which is what makes FYAISA → ElevSH → Discover work with no
+  # address to type. Needs a Fire TV the Vega CLI can see; without one we only
+  # lose the shortcut, not the ability to pair.
+  if [[ $lan -eq 1 && $no_forward -eq 0 ]]; then
+    local addrs; addrs="$(device_targets)"
+    if [[ -z "$addrs" ]]; then
+      warn "No Fire TV visible to the Vega CLI — skipping the discovery tunnel."
+      warn "  Connect one first: vega exec vda connect <stick-ip>:5555"
+    elif start_reverse_forward "$port"; then
+      ok "Discovery tunnel ready — on the Fire TV: FYAISA → ElevSH → Discover."
+    else
+      warn "Could not open the discovery tunnel — enter this PC's address in FYAISA → ElevSH instead."
+    fi
   fi
 
   exec node "${args[@]}"
@@ -456,6 +502,7 @@ except Exception:
 
   local out=""
   if out="$(curl "${args[@]}" 2>&1)" && grep -q '"ok":true' <<<"$out"; then
+    stop_reverse_forward "$port"
     ok "ElevSH bridge on $host:$port stopped."
     return 0
   fi
@@ -487,9 +534,11 @@ except Exception:
         kill $keep 2>/dev/null || true
         sleep 1
         for p in $keep; do kill -9 "$p" 2>/dev/null || true; done
+        stop_reverse_forward "$port"
         ok "ElevSH bridge on port $port stopped."
         return 0
       fi
+      stop_reverse_forward "$port"
       warn "No bridge is running on $host:$port."
       return 0
       ;;

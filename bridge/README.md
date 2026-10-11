@@ -47,6 +47,17 @@ or on the TV in **FYAISA → ElevSH** (the request shows up there). Once an app
 has been allowed in FYAISA, later pairings from that app on the Fire TV are
 auto-approved by the bridge; see "ElevSH access control" below.
 
+### Discovery (no IP to type)
+
+`fyaisa connect --lan` also opens a reverse port forward over the vda link
+(the same idea as `adb reverse`), so the Fire TV can reach the bridge on its
+own `127.0.0.1:47821`. The hub's ElevSH screen then finds it with a single
+**Discover** press — nothing to type on the D-pad. The manual address box is
+still there as a fallback.
+
+`fyaisa disconnect` removes the forward. Pass `--no-forward` to
+`fyaisa connect` to skip it entirely.
+
 Options:
 
 | Flag | Meaning |

@@ -461,6 +461,18 @@ const Hub = () => {
       if (cancelled) return;
       if (!saved) {
         console.info('[FYAISA] no saved pairing');
+        // `fyaisa connect --lan` sets up a reverse tunnel, so the bridge is
+        // reachable on the Fire TV's own loopback. Offer that host so the
+        // user never has to type an address on the D-pad.
+        try {
+          const res = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/ping`);
+          if (res.ok && !cancelled) {
+            console.info('[FYAISA] discovered ElevSH on 127.0.0.1');
+            setPair(p => ({...p, host: '127.0.0.1', message: 'ElevSH found on this PC — press Pair'}));
+          }
+        } catch {
+          // No tunnel; the manual address box is the fallback.
+        }
         return;
       }
       console.info('[FYAISA] restoring saved pairing');
@@ -688,70 +700,126 @@ const Hub = () => {
     return () => clearInterval(iv);
   }, []);
 
-  /** Ask the bridge for a code, then poll until the user approves it on the PC. */
-  const startPairing = useCallback(async () => {
-    if (!base || !hostFilled(pair.host || '')) {
-      setPair(p => ({...p, status: 'error', message: 'Enter your computer’s address first'}));
-      return;
-    }
-    try {
-      setPair(p => ({...p, status: 'requesting', message: 'Requesting code…'}));
-      // Reachability check: GET /ping, which is tokenless. /catalog would 401
-      // here since no valid token exists yet, so pairing could never start.
-      // /pair/request and /pair/approve are tokenless too, and /pair/approve
-      // hands back the bridge's current token, so a stale token heals itself.
-      try {
-        const res = await fetch(`${base}/ping`);
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
-        }
-      } catch (e: any) {
-        setPair(p => ({
-          ...p,
-          status: 'error',
-          message: `ElevSH unreachable at ${base} (${e?.message || e}). Start \`fyaisa connect --lan\` on the PC.`,
-        }));
+  /**
+   * Pairing fetch against a specific host. Like bridgeFetch, but the host is
+   * passed in rather than read from state, so Discover can pair with the
+   * address it just found before that address lands in state.
+   */
+  const pairFetch = useCallback(
+    async (host: string, p: string, opts: RequestInit = {}) => {
+      const res = await fetch(`http://${host}:${BRIDGE_PORT}${p}`, {
+        ...opts,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(pair.token ? {'X-FYAISA-Token': pair.token} : {}),
+          'X-FYAISA-App': HUB_APP_ID,
+          ...(opts.headers || {}),
+        },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      return body;
+    },
+    [pair.token],
+  );
+
+  /**
+   * Ask the bridge at `host` for a code, then poll until the user approves it
+   * on the PC. Shared by the manual address box and the Discover button.
+   */
+  const pairWithHost = useCallback(
+    async (host: string) => {
+      if (!hostFilled(host)) {
+        setPair(p => ({...p, status: 'error', message: 'Enter your computer’s address first'}));
         return;
       }
-      const {code} = await bridgeFetch('/pair/request', {method: 'POST'});
-      setPair(p => ({...p, code, status: 'awaiting', message: `On the PC: fyaisa approve ${code}`}));
-      // Poll for approval; the bridge approves once the user types the code.
-      const iv = setInterval(async () => {
+      const url = `http://${host}:${BRIDGE_PORT}`;
+      try {
+        setPair(p => ({...p, host, status: 'requesting', message: 'Requesting code…'}));
+        // Reachability check: GET /ping, which is tokenless. /catalog would 401
+        // here since no valid token exists yet, so pairing could never start.
+        // /pair/request and /pair/approve are tokenless too, and /pair/approve
+        // hands back the bridge's current token, so a stale token heals itself.
         try {
-          const st = await bridgeFetch(`/pair/status?code=${code}`);
-          if (st.approved) {
-            clearInterval(iv);
-            const ok = await bridgeFetch('/pair/approve', {
-              method: 'POST',
-              body: JSON.stringify({code, device: 'fyaisa-app'}),
-            });
-            setPair(p => {
-              // Persist from inside the updater so we read the latest host
-              // rather than a stale closure value.
-              if (p.host) {
-                savePair({host: p.host, token: ok.token});
-              }
-              return {
+          const res = await fetch(`${url}/ping`);
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+        } catch (e: any) {
+          setPair(p => ({
+            ...p,
+            status: 'error',
+            message: `ElevSH unreachable at ${url} (${e?.message || e}). Start \`fyaisa connect --lan\` on the PC.`,
+          }));
+          return;
+        }
+        const {code} = await pairFetch(host, '/pair/request', {method: 'POST'});
+        setPair(p => ({...p, host, code, status: 'awaiting', message: `On the PC: fyaisa approve ${code}`}));
+        // Poll for approval; the bridge approves once the user types the code.
+        const iv = setInterval(async () => {
+          try {
+            const st = await pairFetch(host, `/pair/status?code=${code}`);
+            if (st.approved) {
+              clearInterval(iv);
+              const ok = await pairFetch(host, '/pair/approve', {
+                method: 'POST',
+                body: JSON.stringify({code, device: 'fyaisa-app'}),
+              });
+              savePair({host, token: ok.token});
+              setPair(p => ({
                 ...p,
+                host,
                 token: ok.token,
                 status: 'paired',
                 message: 'Connected',
-              };
-            });
-            console.info('[FYAISA] paired with bridge');
-            if (pair.host) {
-              setPcInfo(await describePc(new Fyaisa(pair.host, ok.token, BRIDGE_PORT, HUB_APP_ID)));
+              }));
+              console.info('[FYAISA] paired with bridge');
+              setPcInfo(await describePc(new Fyaisa(host, ok.token, BRIDGE_PORT, HUB_APP_ID)));
             }
+          } catch (e: any) {
+            clearInterval(iv);
+            setPair(p => ({...p, status: 'error', message: e.message}));
           }
-        } catch (e: any) {
-          clearInterval(iv);
-          setPair(p => ({...p, status: 'error', message: e.message}));
-        }
-      }, PAIR_POLL_MS);
-    } catch (e: any) {
-      setPair(p => ({...p, status: 'error', message: e.message}));
+        }, PAIR_POLL_MS);
+      } catch (e: any) {
+        setPair(p => ({...p, status: 'error', message: e.message}));
+      }
+    },
+    [pairFetch],
+  );
+
+  /** Pair with the address in the manual box. */
+  const startPairing = useCallback(
+    () => pairWithHost(pair.host || ''),
+    [pairWithHost, pair.host],
+  );
+
+  /**
+   * Look for the bridge on the Fire TV's own loopback — the reverse tunnel
+   * `fyaisa connect --lan` opens — and pair with it if it answers. No address
+   * to type on the D-pad.
+   */
+  const discoverBridge = useCallback(async () => {
+    const host = '127.0.0.1';
+    try {
+      setPair(p => ({...p, status: 'requesting', message: 'Looking for ElevSH…'}));
+      const res = await fetch(`http://${host}:${BRIDGE_PORT}/ping`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+    } catch {
+      setPair(p => ({
+        ...p,
+        status: 'error',
+        message: 'No ElevSH found on this PC — make sure `fyaisa connect --lan` is running, or type the address below.',
+      }));
+      return;
     }
-  }, [base, pair.host, bridgeFetch]);
+    console.info('[FYAISA] discovered ElevSH on 127.0.0.1');
+    await pairWithHost(host);
+  }, [pairWithHost]);
 
   /**
    * Queue a build+install over ElevSH and poll the job.
@@ -1306,8 +1374,13 @@ const Hub = () => {
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Step 2 — computer address</Text>
+            <Pressable style={focusable(styles.installBtn)} onPress={discoverBridge}>
+              <Text style={styles.backText}>Discover ElevSH on this PC</Text>
+            </Pressable>
             <Text style={styles.howtoBody}>
-              Find it under Fire TV → Developer options, or type it below.
+              With fyaisa connect --lan running on the computer, Discover finds it
+              through the tunnel — no address to type. Or enter the PC's address
+              manually below.
             </Text>
             <Text style={styles.code}>
               {hostFilled(pair.host || '')

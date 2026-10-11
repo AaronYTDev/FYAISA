@@ -55,8 +55,10 @@ computer to do it for you:
 fyaisa connect --lan
 ```
 
-In the app: **ElevSH** → type the PC's address with the on-screen keypad
-→ **Get pairing code** → type the 6-digit code shown in your terminal → paired.
+In the app: **ElevSH** → **Discover ElevSH on this PC** (the `--lan` tunnel
+means there is no address to type) → **Get pairing code** → type the 6-digit
+code shown in your terminal → paired. If the tunnel is unavailable, the
+on-screen keypad still lets you enter the PC's address by hand.
 App detail screens then offer **Install via ElevSH**, and the build log streams back
 to the TV.
 
