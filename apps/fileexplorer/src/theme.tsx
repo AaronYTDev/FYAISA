@@ -116,8 +116,60 @@ const luminance = (hex: string) => {
 /** Readable text colour for a filled chip/button. */
 const contrastOn = (hex: string) => (luminance(hex) > 0.6 ? '#101014' : '#ffffff');
 
-export const resolveTheme = (theme: Theme): ResolvedTheme => {
-  const c = theme.palette;
+/** Sentinel value for the animated rainbow option. */
+export const RAINBOW = 'rainbow';
+
+const isRainbow = (v: string) => v === RAINBOW;
+
+/** Vivid (fully saturated) rainbow colour for a hue in degrees. */
+const hueToHex = (hue: number): string => {
+  const h = ((hue % 360) + 360) % 360;
+  const x = 1 - Math.abs(((h / 60) % 2) - 1);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (h < 60) [r, g, b] = [1, x, 0];
+  else if (h < 120) [r, g, b] = [x, 1, 0];
+  else if (h < 180) [r, g, b] = [0, 1, x];
+  else if (h < 240) [r, g, b] = [0, x, 1];
+  else if (h < 300) [r, g, b] = [x, 0, 1];
+  else [r, g, b] = [1, 0, x];
+  return `#${[r, g, b]
+    .map(v => Math.round(v * 255).toString(16).padStart(2, '0'))
+    .join('')}`;
+};
+
+/**
+ * Phase offsets per palette channel, so a rainbow background, surface, accent
+ * and ring never land on the same hue and wipe each other out.
+ */
+const RAINBOW_OFFSET: Record<keyof ThemePalette, number> = {
+  bg: 0,
+  surface: 60,
+  text: 180,
+  textDim: 0,
+  textMuted: 0,
+  accent: 120,
+  focus: 240,
+  danger: 300,
+  success: 200,
+  warn: 40,
+};
+
+/** Replace every palette field set to "rainbow" with its current animated hex. */
+const resolveRainbows = (palette: ThemePalette, hue: number): ThemePalette => {
+  if (!Object.values(palette).some(isRainbow)) return palette;
+  const out = {...palette};
+  (Object.keys(out) as (keyof ThemePalette)[]).forEach(k => {
+    if (out[k] === RAINBOW) {
+      out[k] = hueToHex(hue * 360 + RAINBOW_OFFSET[k]);
+    }
+  });
+  return out;
+};
+
+export const resolveTheme = (theme: Theme, hue = 0): ResolvedTheme => {
+  const c = resolveRainbows(theme.palette, hue);
   return {
     ...c,
     // Nudged surfaces so nested panels read as "above" the card they sit on,
@@ -312,22 +364,22 @@ export const DEFAULT_THEME: Theme = PRESETS.classic;
  * ------------------------------------------------------------------------- */
 export const ACCENT_SWATCHES = [
   '#165a8c', '#3d7bff', '#00acc1', '#00bfa5', '#2e9e4f', '#43a047',
-  '#ffb02e', '#f4511e', '#e50914', '#ff2e97', '#7c4dff', '#c6ff00',
+  '#ffb02e', '#f4511e', '#e50914', '#ff2e97', '#7c4dff', '#c6ff00', RAINBOW,
 ];
 
 export const BG_SWATCHES = [
   '#0b0b0f', '#000000', '#12161c', '#14082a', '#0c140f', '#1a0f0b',
-  '#07161c', '#1c1c22', '#241d33', '#0f1a2b', '#eef1f6', '#f5f0e8',
+  '#07161c', '#1c1c22', '#241d33', '#0f1a2b', '#eef1f6', '#f5f0e8', RAINBOW,
 ];
 
 export const SURFACE_SWATCHES = [
   '#16161d', '#0e0e12', '#1b222c', '#1e0f3a', '#122016', '#241512',
-  '#0e2028', '#232337', '#2a2440', '#12263a', '#ffffff', '#f0ede6',
+  '#0e2028', '#232337', '#2a2440', '#12263a', '#ffffff', '#f0ede6', RAINBOW,
 ];
 
 export const FOCUS_SWATCHES = [
   '#ffb02e', '#ffb74d', '#ff8f00', '#e50914', '#7c4dff', '#6ea8ff',
-  '#88c0d0', '#00e5ff', '#4dd0e1', '#a5d6a7', '#ffffff', '#0b0b0f',
+  '#88c0d0', '#00e5ff', '#4dd0e1', '#a5d6a7', '#ffffff', '#0b0b0f', RAINBOW,
 ];
 
 export const BUTTON_EFFECTS: {id: ButtonEffect; label: string}[] = [
@@ -375,7 +427,9 @@ export const normalizeTheme = (raw: any): Theme => {
   const palette = {...base.palette} as ThemePalette;
   (Object.keys(base.palette) as (keyof ThemePalette)[]).forEach(k => {
     const v = rawPalette[k];
-    if (typeof v === 'string' && /^#?[0-9a-fA-F]{3,8}$/.test(v.trim())) {
+    if (v === RAINBOW) {
+      palette[k] = RAINBOW;
+    } else if (typeof v === 'string' && /^#?[0-9a-fA-F]{3,8}$/.test(v.trim())) {
       palette[k] = v.startsWith('#') ? v : `#${v}`;
     }
   });
@@ -423,6 +477,8 @@ type ThemeContextValue = {
   theme: Theme;
   resolved: ResolvedTheme;
   styles: any;
+  /** Current hue colour (what the rainbow swatch tiles show). */
+  rainbowHex: string;
   setTheme: (t: Theme) => void;
   applyPreset: (id: string) => void;
   patch: (p: ThemePatch) => void;
@@ -456,6 +512,22 @@ export const ThemeProvider = ({
     palette: {...DEFAULT_THEME.palette},
   }));
   const [ready, setReady] = useState(false);
+  const [hue, setHue] = useState(0);
+
+  const rainbowActive = useMemo(
+    () => (Object.values(theme.palette) as string[]).some(isRainbow),
+    [theme],
+  );
+
+  // While any colour channel is set to "rainbow", keep a hue clock advancing
+  // (a full smooth sweep every ~5 s). The resolved palette below re-derives
+  // from it every frame, so every use of that channel animates in place.
+  useEffect(() => {
+    if (!rainbowActive) return;
+    const start = Date.now();
+    const iv = setInterval(() => setHue(((Date.now() - start) / 5000) % 1), 33);
+    return () => clearInterval(iv);
+  }, [rainbowActive]);
 
   // Restore the saved theme once, on launch.
   useEffect(() => {
@@ -509,12 +581,13 @@ export const ThemeProvider = ({
 
   const resetTheme = useCallback(() => applyPreset(DEFAULT_THEME.preset), [applyPreset]);
 
-  const resolved = useMemo(() => resolveTheme(theme), [theme]);
+  const resolved = useMemo(() => resolveTheme(theme, hue), [theme, hue]);
   const styles = useMemo(() => makeStyles(resolved), [resolved, makeStyles]);
+  const rainbowHex = hueToHex(hue * 360);
 
   const value = useMemo<ThemeContextValue>(
-    () => ({theme, resolved, styles, setTheme, applyPreset, patch, resetTheme}),
-    [theme, resolved, styles, setTheme, applyPreset, patch, resetTheme],
+    () => ({theme, resolved, styles, rainbowHex, setTheme, applyPreset, patch, resetTheme}),
+    [theme, resolved, styles, rainbowHex, setTheme, applyPreset, patch, resetTheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

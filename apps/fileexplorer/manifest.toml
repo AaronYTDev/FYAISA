@@ -2,7 +2,7 @@ schema-version = 1
 
 [package]
 title = "ElevSH Files"
-version = "1.2.1"
+version = "1.2.2"
 id = "app.fyaisa.files"
 icon = "@image/fileexplorer.png"
 

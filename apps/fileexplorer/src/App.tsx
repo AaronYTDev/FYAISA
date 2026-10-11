@@ -52,6 +52,7 @@ import {
   ENERGIES,
   FOCUS_SWATCHES,
   PRESET_LIST,
+  RAINBOW,
   SURFACE_SWATCHES,
 } from './theme';
 import type {ResolvedTheme} from './theme';
@@ -688,7 +689,7 @@ const SwatchGrid = ({
   value: string;
   onPick: (color: string) => void;
 }) => {
-  const {styles} = useAppTheme();
+  const {styles, rainbowHex} = useAppTheme();
   const active = String(value).toLowerCase();
   return (
     <View style={styles.swatchGrid}>
@@ -700,7 +701,7 @@ const SwatchGrid = ({
             focusable
             style={({focused}) => [
               styles.swatch,
-              {backgroundColor: c},
+              {backgroundColor: c === RAINBOW ? rainbowHex : c},
               on && styles.swatchOn,
               focused && styles.focused,
             ]}
