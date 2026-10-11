@@ -1,7 +1,19 @@
+# Super Mario Bros
+
 Super Mario Bros NES emulator for Vega OS Fire TV Sticks (FYAISA hub app).
 
-- jsnes (MIT) runs the game inside a Vega WebView. The shell page and the
-  emulator ship as app assets, so the app works offline after the ROM is cached.
+## Credits
+
+- [bfirsh/jsnes](https://github.com/bfirsh/jsnes) (Apache-2.0, © Ben Firshman):
+  the NES emulator, run inside the WebView. The vendored 1.2.1 build is what
+  the shell page inlines.
+- aaronYTDev: the Vega OS shell page, ROM caching and the TV remote mapping.
+- FYAISA: hub and scaffolding.
+
+## How it works
+
+- jsnes runs the game inside a Vega WebView. The shell page and the emulator
+  ship as app assets, so the app works offline after the ROM is cached.
 - The ROM is not bundled. On first launch the app downloads the US Super Mario
   Bros ROM from archive.org, caches it under /data, and starts it. Later launches
   read the cache.
@@ -9,7 +21,7 @@ Super Mario Bros NES emulator for Vega OS Fire TV Sticks (FYAISA hub app).
   Back = Select, Fast-forward = A, Play/Pause = B.
 - Targets armv7/aarch64/x86_64 and min Vega OS 1.2.
 
-Layout:
+## Layout
 
 - assets/smb/index.html is the shell page. jsnes is inlined into it; the separate
   assets/smb/jsnes.min.js is the unmodified jsnes 1.2.1 build the inline copy is
