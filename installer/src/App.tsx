@@ -202,7 +202,14 @@ const FALLBACK_CATALOG: Catalog = {
   ],
 };
 
-// D-pad-friendly keypad for typing a dotted IPv4 address / hostname.
+// Home LANs are almost always 192.168.x.y, so the address box opens with that
+// much already typed and you only punch in the last octets. Backspace stops
+// before the prefix, so a stray press can't wipe it.
+const HOST_PREFIX = '192.168.';
+/** True once the address holds all four octets (i.e. something past the prefix). */
+const hostFilled = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h.trim());
+
+// D-pad-friendly keypad for typing a dotted IPv4 address.
 const HOST_KEYS = [
   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
   '.', '⌫',
@@ -332,7 +339,7 @@ const Hub = () => {
   const [query, setQuery] = useState('');
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [pair, setPair] = useState<PairState>({
-    host: null,
+    host: HOST_PREFIX,
     token: null,
     code: null,
     status: 'idle',
@@ -683,7 +690,7 @@ const Hub = () => {
 
   /** Ask the bridge for a code, then poll until the user approves it on the PC. */
   const startPairing = useCallback(async () => {
-    if (!base) {
+    if (!base || !hostFilled(pair.host || '')) {
       setPair(p => ({...p, status: 'error', message: 'Enter your computer’s address first'}));
       return;
     }
@@ -744,7 +751,7 @@ const Hub = () => {
     } catch (e: any) {
       setPair(p => ({...p, status: 'error', message: e.message}));
     }
-  }, [base, bridgeFetch]);
+  }, [base, pair.host, bridgeFetch]);
 
   /**
    * Queue a build+install over ElevSH and poll the job.
@@ -1303,7 +1310,9 @@ const Hub = () => {
               Find it under Fire TV → Developer options, or type it below.
             </Text>
             <Text style={styles.code}>
-              {pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : 'not set'}
+              {hostFilled(pair.host || '')
+                ? `http://${pair.host}:${BRIDGE_PORT}`
+                : pair.host || HOST_PREFIX}
             </Text>
 
             <View style={styles.keypad}>
@@ -1313,7 +1322,11 @@ const Hub = () => {
                   style={({focused}) => [styles.key, focused && styles.keyFocused, focused && styles.focused]}
                   onPress={() => {
                     if (k === '⌫') {
-                      setPair(p => ({...p, host: (p.host || '').slice(0, -1)}));
+                      setPair(p => {
+                        const cur = p.host ?? HOST_PREFIX;
+                        if (cur === HOST_PREFIX) return p; // the 192.168. stays
+                        return {...p, host: cur.slice(0, -1)};
+                      });
                     } else {
                       setPair(p => ({...p, host: (p.host || '') + k}));
                     }

@@ -179,7 +179,14 @@ const humanSize = (n: number | null): string => {
   return `${(n / 1073741824).toFixed(2)} GB`;
 };
 
-// D-pad-friendly keypad for typing a dotted IPv4 address / hostname.
+// Home LANs are almost always 192.168.x.y, so the address box opens with that
+// much already typed and you only punch in the last octets. Backspace stops
+// before the prefix, so a stray press can't wipe it.
+const HOST_PREFIX = '192.168.';
+/** True once the address holds all four octets (i.e. something past the prefix). */
+const hostFilled = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h.trim());
+
+// D-pad-friendly keypad for typing a dotted IPv4 address.
 const HOST_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.', '⌫'];
 
 /** Wrap a base style so a Pressable renders the theme's TV focus ring. */
@@ -199,7 +206,7 @@ const FilesApp = () => {
 
   const [pair, setPair] = useState<SavedPair | null>(null);
   const [phase, setPhase] = useState<'setup' | 'browse'>('setup');
-  const [host, setHost] = useState('');
+  const [host, setHost] = useState(HOST_PREFIX);
   const [status, setStatus] = useState('Not connected');
   const [busy, setBusy] = useState(false);
   /** Live ElevSH access verdict for this app (shown while on setup). */
@@ -323,7 +330,7 @@ const FilesApp = () => {
   useEffect(() => {
     if (phase !== 'setup') return;
     const h = host.trim();
-    if (!h) {
+    if (!hostFilled(h)) {
       setAccessLine(null);
       return;
     }
@@ -358,7 +365,7 @@ const FilesApp = () => {
   /** Pair (or re-pair) with the PC whose address is in the keypad. */
   const connect = useCallback(async () => {
     const h = host.trim();
-    if (!h) {
+    if (!hostFilled(h)) {
       setStatus('Enter your computer’s address first');
       return;
     }
@@ -493,7 +500,7 @@ const FilesApp = () => {
                   ]}
                   onPress={() => {
                     if (k === '⌫') {
-                      setHost(h => h.slice(0, -1));
+                      setHost(h => (h === HOST_PREFIX ? h : h.slice(0, -1)));
                     } else {
                       setHost(h => h + k);
                     }
