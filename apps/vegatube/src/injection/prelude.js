@@ -39,6 +39,12 @@
  * Everything TizenTube does in-page (ad blocking, SponsorBlock, DeArrow,
  * speed controls, themes, settings UI) requires no native API and works
  * unmodified.
+ *
+ * Edits made to the vendored userscript itself (src/injection/userScript.js),
+ * not here, so re-apply them after scripts/update-tizentube.sh:
+ *   - the settings menu's Updater section is deleted (see enableUpdater above);
+ *   - the "Support VegaTube" settings item is deleted, so the in-app settings
+ *     modal opens straight to the useful categories with no donate entry.
  */
 (function () {
   'use strict';
