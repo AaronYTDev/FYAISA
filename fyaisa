@@ -166,6 +166,28 @@ print('' if a is None else a.get(field,''))" "$1" "$2"
 
 app_path() { app_field "$1" path; }
 
+# The version an app's checkout declares (its manifest.toml). Empty when the
+# app isn't there or has no version line.
+app_version() {
+  sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$1/manifest.toml" 2>/dev/null | head -n1
+}
+
+# Numeric dotted compare: -1, 0 or 1 for $1 against $2. Anything non-numeric
+# counts as 0, so 1.5 and 1.5.0 are the same.
+version_cmp() {
+  local -a av bv; local i x y
+  IFS=. read -r -a av <<< "$1"
+  IFS=. read -r -a bv <<< "$2"
+  for ((i = 0; i < ${#av[@]} || i < ${#bv[@]}; i++)); do
+    x="${av[i]:-0}"; y="${bv[i]:-0}"
+    x="${x//[!0-9]/}"; y="${y//[!0-9]/}"
+    x=$((10#${x:-0})); y=$((10#${y:-0}))
+    (( x < y )) && { printf '%s' -1; return; }
+    (( x > y )) && { printf '%s' 1; return; }
+  done
+  printf '%s' 0
+}
+
 # --- device ------------------------------------------------------------------
 # `vega device …` needs a live vda link, and that link drops whenever the
 # stick sleeps. So reconnect on every lookup: to --ip when one was given,
@@ -264,16 +286,31 @@ app_src_dir() {
   local rel; rel="$(app_path "$1")"
   [[ -n "$rel" ]] || die "App '$1' is not in the catalog."
 
+  # Which local checkout is in play, if any: an explicit --dir (or FYAISA_DIR),
+  # or the checkout this script lives in.
+  local local_dir=""
   if [[ -n "$LOCAL_DIR" && -d "$LOCAL_DIR/$rel" && "$LOCAL_DIR" != "$SCRIPT_DIR" ]]; then
-    # Explicit --dir flag: use local checkout
-    printf '%s' "$LOCAL_DIR/$rel"
+    local_dir="$LOCAL_DIR/$rel"
   elif [[ -d "$LOCAL_DIR/$rel" && -f "$LOCAL_DIR/.git/HEAD" ]]; then
-    # Running from a git checkout: use local source
-    printf '%s' "$LOCAL_DIR/$rel"
-  else
-    # Default: fetch from GitHub
-    fetch_app_source "$rel"
+    local_dir="$LOCAL_DIR/$rel"
   fi
+
+  # Build from that checkout, but only while it isn't behind the version the
+  # catalog publishes — a stale clone would build the old version the catalog
+  # just offered to replace.
+  if [[ -n "$local_dir" ]]; then
+    local have want
+    have="$(app_version "$local_dir")"
+    want="$(app_field "$1" version)"
+    if [[ -n "$have" && -n "$want" && "$(version_cmp "$have" "$want")" = "-1" ]]; then
+      info "Local $rel is $have, catalog has $want — fetching from GitHub"
+    else
+      printf '%s' "$local_dir"
+      return
+    fi
+  fi
+
+  fetch_app_source "$rel"
 }
 
 build_app() {
