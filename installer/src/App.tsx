@@ -40,6 +40,7 @@ const APP_ICONS: Record<string, any> = {
   'app.fyaisa.files.main': require('../assets/image/fileexplorer.png'),
   'app.cinevega.main': require('../assets/image/cinevega.png'),
   'app.fyaisa.hub.main': require('../assets/image/fyaisa.png'),
+  'app.deltarunesim.main': require('../assets/image/deltarunesim.png'),
 };
 
 type HubApp = {
