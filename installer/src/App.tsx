@@ -318,6 +318,11 @@ const Hub = () => {
   const [versions, setVersions] = useState<Record<string, string>>({});
   /** Bumped to force a version re-read (after installs and on a slow timer). */
   const [versionsTick, setVersionsTick] = useState(0);
+  // Whether the installed list, and then the versions behind it, have been read
+  // since the current pairing. Until both land the rows can't tell install from
+  // update, so their buttons say "Syncing…" rather than guess.
+  const [installedLoaded, setInstalledLoaded] = useState(false);
+  const [statusKnown, setStatusKnown] = useState(false);
   /** Update-all progress; null while no update-all run is going on. */
   const [updateAll, setUpdateAll] = useState<{done: number; total: number; current: string} | null>(null);
   // Power tools (ElevSH → poke at the device): the last action's output, the
@@ -385,6 +390,11 @@ const Hub = () => {
     [installed, versions],
   );
   const updatable = useMemo(() => apps.filter(a => appState(a) === 'update'), [apps, appState]);
+  /**
+   * While ElevSH is still reading what's installed and at what version, the
+   * install/update buttons say "Syncing…" instead of guessing between the two.
+   */
+  const syncing = pair.status === 'paired' && !statusKnown;
 
   // Restore a previous pairing on launch; React state alone is lost on every
   // app restart.
@@ -520,10 +530,19 @@ const Hub = () => {
       );
     } catch {
       // Bridge offline; the status strip says so, buttons keep the last state.
+    } finally {
+      // Either way this attempt is over. A read that failed still ends the
+      // "Syncing…" state — better to show the last known status than to hide
+      // every button behind a spinner that never clears.
+      setInstalledLoaded(true);
     }
   }, [pair.status, bridgeFetch]);
 
   useEffect(() => {
+    // A fresh pairing (or a reconnect) has read nothing yet, so hold the buttons
+    // on "Syncing…" until the installed list and versions come back.
+    setInstalledLoaded(false);
+    setStatusKnown(false);
     if (pair.status !== 'paired') {
       return;
     }
@@ -588,14 +607,31 @@ const Hub = () => {
     [apps, installed],
   );
   useEffect(() => {
-    if (pair.status !== 'paired' || !installedKey) {
+    if (pair.status !== 'paired') {
       setVersions({});
+      setStatusKnown(false);
       return;
     }
-    refreshVersions(installedKey.split(','));
+    if (!installedLoaded) {
+      return; // still finding the installed list; buttons stay on "Syncing…"
+    }
+    if (!installedKey) {
+      setVersions({});
+      setStatusKnown(true); // nothing installed, so there's nothing left to read
+      return;
+    }
+    let cancelled = false;
+    refreshVersions(installedKey.split(',')).finally(() => {
+      if (!cancelled) {
+        setStatusKnown(true);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
     // versionsTick is a deliberate trigger: it re-reads after an install, and a
     // slow timer catches updates made outside the hub.
-  }, [installedKey, versionsTick, pair.status, refreshVersions]);
+  }, [installedKey, versionsTick, pair.status, installedLoaded, refreshVersions]);
 
   useEffect(() => {
     const iv = setInterval(() => setVersionsTick(t => t + 1), 5 * 60 * 1000);
@@ -689,6 +725,9 @@ const Hub = () => {
             if (['done', 'error'].includes(job.status)) {
               clearInterval(iv);
               if (job.status === 'done') {
+                // Re-read the status; the buttons go back to "Syncing…" while
+                // that happens so nobody taps an install the job just changed.
+                setStatusKnown(false);
                 refreshInstalled();
                 setVersionsTick(t => t + 1);
               }
@@ -757,6 +796,7 @@ const Hub = () => {
       setPair(p => ({...p, status: 'error', message: e.message}));
     } finally {
       setTimeout(() => setUpdateAll(null), 4000);
+      setStatusKnown(false);
       refreshInstalled();
       setVersionsTick(t => t + 1);
     }
@@ -1722,7 +1762,11 @@ const Hub = () => {
                 <Text style={styles.howtoBody}>
                   …or install from right here over ElevSH ({pair.host}):
                 </Text>
-                {appState(selected) === 'current' ? (
+                {syncing ? (
+                  <Pressable disabled style={[styles.installBtn, styles.idleBtn]}>
+                    <Text style={[styles.backText, styles.idleText]}>Syncing…</Text>
+                  </Pressable>
+                ) : appState(selected) === 'current' ? (
                   <Text style={styles.upToDate}>
                     Installed and up to date — nothing to update.
                   </Text>
@@ -1844,13 +1888,16 @@ const Hub = () => {
         {/* Update all: only shows when something actually needs it, and only
             rebuilds those apps — the same bridge jobs the per-row buttons
             queue, one at a time. */}
-        {updatable.length > 0 || updateAll ? (
+        {syncing || updatable.length > 0 || updateAll ? (
           <Pressable
-            focusable
-            style={({focused}) => [styles.updateAllBtn, focused && styles.focused]}
+            focusable={!syncing}
+            disabled={syncing}
+            style={({focused}) => [styles.updateAllBtn, syncing && styles.idleBtn, focused && styles.focused]}
             onPress={runUpdateAll}>
-            <Text style={styles.refreshText}>
-              {updateAll
+            <Text style={[styles.refreshText, syncing && styles.idleText]}>
+              {syncing
+                ? 'Syncing…'
+                : updateAll
                 ? `Updating ${updateAll.done}/${updateAll.total}…`
                 : `Update all (${updatable.length})`}
             </Text>
@@ -1937,7 +1984,11 @@ const Hub = () => {
                     inside the row Pressable confuses D-pad focus. A current
                     app gets a plain label, not a button — there's nothing to
                     update, so it shouldn't take a D-pad step. */}
-                {state === 'current' ? (
+                {syncing ? (
+                  <Pressable disabled style={[styles.rowActionBtn, styles.idleBtn]}>
+                    <Text style={[styles.rowActionText, styles.idleText]}>Syncing…</Text>
+                  </Pressable>
+                ) : state === 'current' ? (
                   <View style={[styles.rowActionBtn, styles.rowActionCurrent]}>
                     <Text style={[styles.rowActionText, styles.rowActionMutedText]}>Up to date</Text>
                   </View>
@@ -2137,6 +2188,10 @@ const makeStyles = (t: ResolvedTheme) => {
   rowActionText: {color: t.accentText, fontSize: 16, fontWeight: '600'},
   rowActionCurrent: {backgroundColor: t.surfaceKey},
   rowActionMutedText: {color: t.textDim},
+  // "Syncing…" buttons: the real button shape, muted, and disabled so they take
+  // no press and no D-pad step while ElevSH is still reading the device.
+  idleBtn: {backgroundColor: t.surfaceKey},
+  idleText: {color: t.textDim},
   dot: {width: 12, height: 12, borderRadius: 6},
   chevron: {color: t.textMuted, fontSize: 30, fontWeight: '600'},
   detailWrap: {flex: 1},
