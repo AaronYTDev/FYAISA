@@ -111,6 +111,38 @@ async function fetchRemoteCatalog() {
   }
 }
 
+// The catalog the hub works from: GitHub's, so merged PRs and releases show up
+// without waiting for your local checkout to catch up. Local is the offline
+// fallback.
+async function currentCatalog() {
+  const remote = await fetchRemoteCatalog();
+  if (remote && Array.isArray(remote.apps)) return remote;
+  return readCatalog();
+}
+
+// The version an app's local checkout declares (its manifest.toml). null when
+// the app isn't there or has no version line.
+function readLocalVersion(dir) {
+  try {
+    const manifest = fs.readFileSync(path.join(dir, 'manifest.toml'), 'utf8');
+    const m = /^\s*version\s*=\s*"([^"]+)"/m.exec(manifest);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+// Dotted version compare: -1, 0 or 1. Anything non-numeric counts as 0.
+function compareVersions(a, b) {
+  const pa = String(a).split('.');
+  const pb = String(b).split('.');
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (parseInt(pa[i], 10) || 0) - (parseInt(pb[i], 10) || 0);
+    if (d) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Install pipeline (delegates to the same steps as `fyaisa install`)
 // ---------------------------------------------------------------------------
@@ -182,20 +214,35 @@ async function fetchRemoteApp(relPath) {
 }
 
 async function installApp(appId, job, opts = {}) {
-  const catalog = readCatalog();
+  const catalog = await currentCatalog();
   const app = (catalog.apps || []).find((a) => a.id === appId);
   if (!app) {
     job.status = 'error';
     job.log.push(`Unknown app id: ${appId}`);
     return;
   }
+  if (!app.path) {
+    job.status = 'error';
+    job.log.push(`Catalog entry ${appId} has no path; cannot build it.`);
+    return;
+  }
 
-  // Resolve app source: local if available, otherwise fetch from GitHub
-  let dir = path.join(HOST_DIR, app.path || '');
-  if (!fs.existsSync(dir)) {
-    job.log.push(`App source not found locally, fetching from GitHub…`);
+  // Build from your local checkout so you can install work in progress, but
+  // only while it is not behind the version the catalog publishes — a stale
+  // clone would otherwise rebuild the very version the hub offered to replace.
+  const localDir = path.join(HOST_DIR, app.path);
+  const localVersion = readLocalVersion(localDir);
+  const behind =
+    !!localVersion && !!app.version && compareVersions(localVersion, app.version) < 0;
+  let dir = localDir;
+  if (!fs.existsSync(localDir) || behind) {
+    job.log.push(
+      behind
+        ? `Local ${app.path} is ${localVersion}, catalog has ${app.version} — fetching from GitHub…`
+        : `App source not found locally, fetching from GitHub…`,
+    );
     try {
-      dir = await fetchRemoteApp(app.path || '');
+      dir = await fetchRemoteApp(app.path);
       job.log.push(`Fetched ${app.path} from GitHub`);
     } catch (e) {
       job.status = 'error';
@@ -646,12 +693,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (path_ === '/catalog' && req.method === 'GET') {
-    // Prefer the remote catalog so the hub always shows the latest apps.
-    const remote = await fetchRemoteCatalog();
-    if (remote && Array.isArray(remote.apps)) {
-      return json(res, 200, remote);
-    }
-    return json(res, 200, readCatalog());
+    return json(res, 200, await currentCatalog());
   }
 
   if (path_ === '/install' && req.method === 'POST') {
@@ -662,7 +704,7 @@ const server = http.createServer(async (req, res) => {
     if (wantPatch) {
       // Patch installs rewrite the app's identity, so the target comes from
       // the catalog (which the hub owner controls), never from the request.
-      const entry = (readCatalog().apps || []).find((a) => a.id === appId);
+      const entry = ((await currentCatalog()).apps || []).find((a) => a.id === appId);
       if (!entry || !entry.patch || !APP_ID_RE.test(String(entry.patch.for || ''))) {
         return json(res, 400, { error: 'this app has no patch metadata in the catalog', code: 'no_patch' });
       }

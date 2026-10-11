@@ -305,8 +305,11 @@ The full contract (naming, licensing, catalog fields) is in
 
 Apps are pulled from GitHub by default: `fyaisa install` and the bridge
 download app source from the repo tarball into `~/.fyaisa/app-cache/`,
-so contributors don't need a local clone. Use `--dir` to build from a
-local checkout instead.
+so contributors don't need a local clone. When the bridge finds the app in
+your local checkout it builds that instead, but only while the checkout
+isn't behind the version the catalog publishes — otherwise a couch update
+would rebuild the old version it just offered to replace. Use `--dir` to
+build from a local checkout with the CLI.
 
 ## 8. Vega OS gotchas
 

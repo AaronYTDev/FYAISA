@@ -53,7 +53,7 @@ Options:
 | --- | --- |
 | `--port N` | listen port (default `47821`) |
 | `--lan` | bind `0.0.0.0` so the Fire TV can reach it (default: localhost only) |
-| `--hub-dir` | FYAISA checkout to build apps from |
+| `--hub-dir` | FYAISA checkout to build apps from when it isn't behind the catalog |
 | `--tunnel` | print cloudflared/ngrok commands for internet access |
 
 ## HTTP API
