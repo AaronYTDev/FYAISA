@@ -20,6 +20,7 @@ import {Pressable} from '@amazon-devices/react-native-kepler';
 import {KeplerFileSystem} from '@amazon-devices/kepler-file-system';
 import {Fyaisa, FyaisaError} from './fyaisaClient';
 import {Backdrop} from './Backdrop';
+import {Intro} from './Intro';
 import {
   ACCENT_SWATCHES,
   BACKGROUNDS,
@@ -285,6 +286,9 @@ const Hub = () => {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // The launch intro owns the screen first; true for the rest of the session
+  // once it has finished or been skipped.
+  const [introDone, setIntroDone] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Apps menu search: the query string, plus whether the on-screen keyboard is
   // up (a TV has no system keyboard; typing is a grid of keys you D-pad over).
@@ -941,9 +945,17 @@ const Hub = () => {
     else if (selectedId === '__terminal__') setCmdOut(null);
   }, [selectedId, loadSystemApps, loadRunningApps]);
 
-  // The splash screen is dismissed exactly once, by the first fetch; loadCatalog
-  // is also re-run by the manual Refresh button and must not touch it again.
+  // The splash screen is dismissed exactly once: the intro drops it as soon as
+  // it has painted, and loadCatalog keeps the same guard as a backstop in case
+  // the intro never mounts.
   const splashHiddenRef = useRef(false);
+  const hideSplash = useCallback(() => {
+    if (splashHiddenRef.current) {
+      return;
+    }
+    splashHiddenRef.current = true;
+    hideSplashScreenCallback();
+  }, [hideSplashScreenCallback]);
 
   const loadCatalog = useCallback(
     async (quiet = false) => {
@@ -979,13 +991,10 @@ const Hub = () => {
         if (!quiet) {
           setLoading(false);
         }
-        if (!splashHiddenRef.current) {
-          splashHiddenRef.current = true;
-          hideSplashScreenCallback();
-        }
+        hideSplash();
       }
     },
-    [hideSplashScreenCallback],
+    [hideSplash],
   );
 
   useEffect(() => {
@@ -1003,6 +1012,10 @@ const Hub = () => {
   // "ReferenceError: Property 'document' doesn't exist").
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!introDone) {
+        setIntroDone(true); // first Back skips the intro, it doesn't close us
+        return true;
+      }
       if (keyboardOpen) {
         setKeyboardOpen(false); // close the keyboard first, keep the screen under it
         return true;
@@ -1018,7 +1031,13 @@ const Hub = () => {
       return true;
     });
     return () => sub.remove();
-  }, [selectedId, keyboardOpen]);
+  }, [selectedId, keyboardOpen, introDone]);
+
+  // The intro plays first and owns the whole screen; the menus below don't
+  // mount until it's gone, so nothing behind it can steal D-pad focus.
+  if (!introDone) {
+    return <Intro onFirstFrame={hideSplash} onDone={() => setIntroDone(true)} />;
+  }
 
   // Main menu: submenus (Apps / ElevSH) hang off this screen.
   if (selectedId === null) {
