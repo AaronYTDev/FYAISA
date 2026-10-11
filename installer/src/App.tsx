@@ -19,6 +19,20 @@ import {
 import {Pressable} from '@amazon-devices/react-native-kepler';
 import {KeplerFileSystem} from '@amazon-devices/kepler-file-system';
 import {Fyaisa, FyaisaError} from './fyaisaClient';
+import {Backdrop} from './Backdrop';
+import {
+  ACCENT_SWATCHES,
+  BACKGROUNDS,
+  BG_SWATCHES,
+  BUTTON_EFFECTS,
+  ENERGIES,
+  PRESET_LIST,
+  ResolvedTheme,
+  SURFACE_SWATCHES,
+  Theme,
+  ThemeProvider,
+  useAppTheme,
+} from './theme';
 import {
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
@@ -249,12 +263,20 @@ const describePc = async (fy: Fyaisa): Promise<string> => {
 /**
  * Wrap a base style so a Pressable renders the TV focus ring (styles.focused)
  * when D-pad focused. Every focusable in the app goes through this, so focus
- * is actually visible from the couch.
+ * is actually visible from the couch. It is bound to the active theme, so the
+ * ring and glow pick up the theme's focus colour.
  */
-const focusable = (base: any) => ({focused}: {focused: boolean}) =>
-  [base, focused && styles.focused];
+const useFocusable = () => {
+  const {styles} = useAppTheme();
+  return useCallback(
+    (base: any) => ({focused}: {focused: boolean}) => [base, focused && styles.focused],
+    [styles],
+  );
+};
 
-export const App = () => {
+const Hub = () => {
+  const {styles, theme, applyPreset, patch, resetTheme} = useAppTheme();
+  const focusable = useFocusable();
   usePreventHideSplashScreen();
   const hideSplashScreenCallback = useHideSplashScreenCallback();
 
@@ -1012,6 +1034,13 @@ export const App = () => {
             ? `Connected to ${pair.host} — pairing, access & installs`
             : `Pair this TV with your PC — ${pair.message}`,
       },
+      {
+        id: '__themes__',
+        title: 'Themes',
+        summary: `${theme.name} — ${
+          theme.background === 'none' ? 'static' : `${theme.background} background`
+        }, ${theme.buttonEffect} buttons`,
+      },
     ];
     return (
       <View style={styles.wrap}>
@@ -1156,8 +1185,8 @@ export const App = () => {
                       <Text
                         style={[
                           styles.accessMeta,
-                          a.status === 'allow' && {color: '#7ee787'},
-                          a.status === 'deny' && {color: '#e57373'},
+                          a.status === 'allow' && styles.accessAllow,
+                          a.status === 'deny' && styles.accessDeny,
                         ]}>
                         {a.status === 'allow'
                           ? 'allowed — pairs automatically'
@@ -1170,7 +1199,7 @@ export const App = () => {
                       <Pressable
                         style={focusable(styles.denyBtn)}
                         onPress={() => decideAccess(a.appId, 'deny')}>
-                        <Text style={styles.accessBtnText}>Deny</Text>
+                        <Text style={[styles.accessBtnText, styles.denyBtnText]}>Deny</Text>
                       </Pressable>
                     ) : (
                       <Pressable
@@ -1183,7 +1212,7 @@ export const App = () => {
                       <Pressable
                         style={focusable(styles.denyBtn)}
                         onPress={() => decideAccess(a.appId, 'deny')}>
-                        <Text style={styles.accessBtnText}>Deny</Text>
+                        <Text style={[styles.accessBtnText, styles.denyBtnText]}>Deny</Text>
                       </Pressable>
                     ) : null}
                   </View>
@@ -1278,7 +1307,7 @@ export const App = () => {
           {toolBusy ? <Text style={styles.pcInfo}>{toolBusy}</Text> : null}
           {sysApps == null ? (
             <View style={styles.center}>
-              <ActivityIndicator size="large" color="#fff" />
+              <ActivityIndicator size="large" color={theme.palette.text} />
             </View>
           ) : sysApps.length === 0 ? (
             <Text style={styles.dim}>Nothing to show.</Text>
@@ -1336,7 +1365,7 @@ export const App = () => {
           {toolBusy ? <Text style={styles.pcInfo}>{toolBusy}</Text> : null}
           {runningApps == null ? (
             <View style={styles.center}>
-              <ActivityIndicator size="large" color="#fff" />
+              <ActivityIndicator size="large" color={theme.palette.text} />
             </View>
           ) : runningApps.length === 0 ? (
             <Text style={styles.dim}>Nothing is running.</Text>
@@ -1450,6 +1479,147 @@ export const App = () => {
           <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
             <Text style={styles.backText}>Back</Text>
           </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Themes: presets, plus per-setting customisation (colours, button style,
+  // background effect). App logos and tile art are never restyled.
+  if (selectedId === '__themes__') {
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <Text style={styles.brand}>Themes</Text>
+          <Text style={styles.tagline}>
+            Make the hub yours: pick a preset, or dial in your own colours and
+            effects. App logos are never restyled.
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={styles.list}>
+          <Text style={styles.sectionTitle}>Presets</Text>
+          <View style={styles.presetGrid}>
+            {PRESET_LIST.map((p, i) => (
+              <Pressable
+                key={p.preset}
+                hasTVPreferredFocus={i === 0}
+                focusable
+                style={({focused}) => [
+                  styles.presetCard,
+                  theme.preset === p.preset && styles.presetCardOn,
+                  focused && styles.focused,
+                ]}
+                onPress={() => applyPreset(p.preset)}>
+                <View style={styles.presetSwatches}>
+                  <View style={[styles.presetDot, {backgroundColor: p.palette.bg}]} />
+                  <View style={[styles.presetDot, {backgroundColor: p.palette.surface}]} />
+                  <View style={[styles.presetDot, {backgroundColor: p.palette.accent}]} />
+                  <View style={[styles.presetDot, {backgroundColor: p.palette.focus}]} />
+                </View>
+                <Text style={styles.presetName}>{p.name}</Text>
+                <Text style={styles.presetState}>
+                  {theme.preset === p.preset ? 'Active' : 'Select'} · {p.background} ·{' '}
+                  {p.buttonEffect}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={styles.sectionTitle}>Accent color</Text>
+          <Text style={styles.sectionHint}>Buttons and highlights.</Text>
+          <SwatchGrid
+            colors={ACCENT_SWATCHES}
+            value={theme.palette.accent}
+            onPick={c => patch({palette: {accent: c}})}
+          />
+
+          <Text style={styles.sectionTitle}>Background color</Text>
+          <SwatchGrid
+            colors={BG_SWATCHES}
+            value={theme.palette.bg}
+            onPick={c => patch({palette: {bg: c}})}
+          />
+
+          <Text style={styles.sectionTitle}>Panel color</Text>
+          <Text style={styles.sectionHint}>Cards, rows and the search box.</Text>
+          <SwatchGrid
+            colors={SURFACE_SWATCHES}
+            value={theme.palette.surface}
+            onPick={c => patch({palette: {surface: c}})}
+          />
+
+          <Text style={styles.sectionTitle}>Button style</Text>
+          <View style={styles.chipRow}>
+            {BUTTON_EFFECTS.map(e => (
+              <Pressable
+                key={e.id}
+                focusable
+                style={({focused}) => [
+                  styles.chip,
+                  theme.buttonEffect === e.id && styles.chipOn,
+                  focused && styles.focused,
+                ]}
+                onPress={() => patch({buttonEffect: e.id})}>
+                <Text
+                  style={[styles.chipText, theme.buttonEffect === e.id && styles.chipOnText]}>
+                  {e.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <Text style={styles.sectionTitle}>Background effect</Text>
+          <View style={styles.chipRow}>
+            {BACKGROUNDS.map(b => (
+              <Pressable
+                key={b.id}
+                focusable
+                style={({focused}) => [
+                  styles.chip,
+                  theme.background === b.id && styles.chipOn,
+                  focused && styles.focused,
+                ]}
+                onPress={() => patch({background: b.id})}>
+                <Text
+                  style={[styles.chipText, theme.background === b.id && styles.chipOnText]}>
+                  {b.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          {theme.background !== 'none' ? (
+            <>
+              <Text style={styles.sectionTitle}>Motion</Text>
+              <View style={styles.chipRow}>
+                {ENERGIES.map(e => (
+                  <Pressable
+                    key={e.id}
+                    focusable
+                    style={({focused}) => [
+                      styles.chip,
+                      theme.energy === e.id && styles.chipOn,
+                      focused && styles.focused,
+                    ]}
+                    onPress={() => patch({energy: e.id})}>
+                    <Text
+                      style={[styles.chipText, theme.energy === e.id && styles.chipOnText]}>
+                      {e.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </>
+          ) : null}
+
+          <View style={styles.themeActions}>
+            <Pressable style={focusable(styles.forgetBtn)} onPress={resetTheme}>
+              <Text style={styles.forgetText}>Reset to Classic</Text>
+            </Pressable>
+            <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
+              <Text style={styles.backText}>Back</Text>
+            </Pressable>
+          </View>
         </ScrollView>
       </View>
     );
@@ -1687,7 +1857,7 @@ export const App = () => {
 
       {catalog == null ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#fff" />
+          <ActivityIndicator size="large" color={theme.palette.text} />
           <Text style={styles.dim}>Loading catalog…</Text>
         </View>
       ) : (
@@ -1802,11 +1972,14 @@ const AppIcon = ({app, style}: {app: HubApp; style: any}) => {
   return <Image style={style} source={source} onError={() => setFailed(true)} />;
 };
 
-const Badge = ({label, color}: {label: string; color: string}) => (
-  <View style={[styles.badge, {borderColor: color}]}>
-    <Text style={[styles.badgeText, {color}]}>{label}</Text>
-  </View>
-);
+const Badge = ({label, color}: {label: string; color: string}) => {
+  const {styles} = useAppTheme();
+  return (
+    <View style={[styles.badge, {borderColor: color}]}>
+      <Text style={[styles.badgeText, {color}]}>{label}</Text>
+    </View>
+  );
+};
 
 /**
  * One action in the ElevSH Power-tools card: a title, a one-line explanation
@@ -1825,46 +1998,95 @@ const ToolRow = ({
   action: string;
   danger?: boolean;
   onPress: () => void;
-}) => (
-  <Pressable
-    focusable
-    style={({focused}) => [styles.toolRow, focused && styles.rowFocused, focused && styles.focused]}
-    onPress={onPress}>
-    <View style={styles.toolMain}>
-      <Text style={[styles.toolTitle, danger && styles.toolDanger]}>{title}</Text>
-      <Text style={styles.toolSummary}>{summary}</Text>
-    </View>
-    <Text style={styles.toolOpen}>{action}</Text>
-  </Pressable>
-);
+}) => {
+  const {styles} = useAppTheme();
+  return (
+    <Pressable
+      focusable
+      style={({focused}) => [styles.toolRow, focused && styles.rowFocused, focused && styles.focused]}
+      onPress={onPress}>
+      <View style={styles.toolMain}>
+        <Text style={[styles.toolTitle, danger && styles.toolDanger]}>{title}</Text>
+        <Text style={styles.toolSummary}>{summary}</Text>
+      </View>
+      <Text style={styles.toolOpen}>{action}</Text>
+    </Pressable>
+  );
+};
 
-const styles = StyleSheet.create({
-  wrap: {flex: 1, backgroundColor: '#0b0b0f'},
+/**
+ * A row of colour choices on the Themes screen. The active one gets a focus
+ * -coloured ring; focus (not selection) comes from the shared `focused` style.
+ */
+const SwatchGrid = ({
+  colors,
+  value,
+  onPick,
+}: {
+  colors: string[];
+  value: string;
+  onPick: (color: string) => void;
+}) => {
+  const {styles} = useAppTheme();
+  const active = String(value).toLowerCase();
+  return (
+    <View style={styles.swatchGrid}>
+      {colors.map(c => {
+        const on = c.toLowerCase() === active;
+        return (
+          <Pressable
+            key={c}
+            focusable
+            style={({focused}) => [
+              styles.swatch,
+              {backgroundColor: c},
+              on && styles.swatchOn,
+              focused && styles.focused,
+            ]}
+            onPress={() => onPick(c)}>
+            {on ? <View style={styles.swatchCheck} /> : null}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+};
+
+const makeStyles = (t: ResolvedTheme) => {
+  // A button's resting border, so "Outline" reads as outlined and the others
+  // stay flush with the surface (a transparent 4px border keeps layout stable
+  // when the focus ring appears).
+  const buttonBase =
+    t.buttonEffect === 'outline'
+      ? {borderWidth: 2, borderColor: t.border}
+      : {borderWidth: 4, borderColor: 'transparent'};
+
+  return StyleSheet.create({
+  root: {flex: 1, backgroundColor: t.bg},
+  wrap: {flex: 1},
   header: {paddingHorizontal: 40, paddingTop: 36, paddingBottom: 18},
-  brand: {color: '#fff', fontSize: 40, fontWeight: '700'},
-  tagline: {color: '#8b8b99', fontSize: 17, marginTop: 4},
+  brand: {color: t.text, fontSize: 40, fontWeight: '700'},
+  tagline: {color: t.textDim, fontSize: 17, marginTop: 4},
   center: {flex: 1, alignItems: 'center', justifyContent: 'center'},
-  dim: {color: '#77778a', fontSize: 16, marginTop: 12},
-  warn: {color: '#ffb300', fontSize: 15, marginBottom: 12},
+  dim: {color: t.textMuted, fontSize: 16, marginTop: 12},
+  warn: {color: t.warn, fontSize: 15, marginBottom: 12},
   list: {paddingHorizontal: 40, paddingBottom: 40},
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16161d',
+    backgroundColor: t.surface,
     borderRadius: 10,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     padding: 18,
     marginBottom: 12,
   },
-  rowFocused: {backgroundColor: '#1e1e28'},
+  rowFocused: {backgroundColor: t.surfaceAlt},
   rowCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16161d',
+    backgroundColor: t.surface,
     borderRadius: 10,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     padding: 18,
     marginBottom: 12,
   },
@@ -1872,29 +2094,28 @@ const styles = StyleSheet.create({
   rowIcon: {width: 76, height: 76, borderRadius: 14, marginRight: 18},
   detailIcon: {width: 96, height: 96, borderRadius: 18, marginBottom: 14},
   rowMain: {flex: 1, paddingRight: 16},
-  rowTitle: {color: '#fff', fontSize: 22, fontWeight: '600'},
-  rowId: {color: '#6f6f80', fontSize: 13, marginTop: 2},
-  rowSummary: {color: '#b9b9c6', fontSize: 15, marginTop: 6},
+  rowTitle: {color: t.text, fontSize: 22, fontWeight: '600'},
+  rowId: {color: t.textMuted, fontSize: 13, marginTop: 2},
+  rowSummary: {color: t.textSoft, fontSize: 15, marginTop: 6},
   rowActionBtn: {
-    backgroundColor: '#165a8c',
+    backgroundColor: t.accent,
     borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     paddingHorizontal: 20,
     paddingVertical: 11,
     marginLeft: 8,
   },
-  rowActionText: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  rowActionCurrent: {backgroundColor: '#23232d'},
-  rowActionMutedText: {color: '#8b8b99'},
+  rowActionText: {color: t.accentText, fontSize: 16, fontWeight: '600'},
+  rowActionCurrent: {backgroundColor: t.surfaceKey},
+  rowActionMutedText: {color: t.textDim},
   dot: {width: 12, height: 12, borderRadius: 6},
-  chevron: {color: '#6f6f80', fontSize: 30, fontWeight: '600'},
-  detailWrap: {flex: 1, backgroundColor: '#0b0b0f'},
+  chevron: {color: t.textMuted, fontSize: 30, fontWeight: '600'},
+  detailWrap: {flex: 1},
   detail: {padding: 40, paddingBottom: 60},
-  detailTitle: {color: '#fff', fontSize: 38, fontWeight: '700'},
-  detailId: {color: '#6f6f80', fontSize: 15, marginTop: 4},
-  detailSummary: {color: '#e6e6ef', fontSize: 20, marginTop: 16},
-  detailBody: {color: '#a9a9b8', fontSize: 16, marginTop: 14, lineHeight: 23},
+  detailTitle: {color: t.text, fontSize: 38, fontWeight: '700'},
+  detailId: {color: t.textMuted, fontSize: 15, marginTop: 4},
+  detailSummary: {color: t.textStrong, fontSize: 20, marginTop: 16},
+  detailBody: {color: t.textBody, fontSize: 16, marginTop: 14, lineHeight: 23},
   badges: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 20},
   badge: {
     borderWidth: 1,
@@ -1905,112 +2126,109 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   badgeText: {fontSize: 13},
-  meta: {color: '#8b8b99', fontSize: 15, marginTop: 6},
+  meta: {color: t.textDim, fontSize: 15, marginTop: 6},
   notes: {marginTop: 18},
-  note: {color: '#9d9dae', fontSize: 15, marginBottom: 6, lineHeight: 21},
+  note: {color: t.textBody, fontSize: 15, marginBottom: 6, lineHeight: 21},
   howto: {
     marginTop: 26,
-    backgroundColor: '#16161d',
+    backgroundColor: t.surface,
     borderRadius: 10,
     padding: 18,
   },
-  howtoTitle: {color: '#fff', fontSize: 19, fontWeight: '600', marginBottom: 8},
-  howtoBody: {color: '#a9a9b8', fontSize: 15, lineHeight: 21},
+  howtoTitle: {color: t.text, fontSize: 19, fontWeight: '600', marginBottom: 8},
+  howtoBody: {color: t.textBody, fontSize: 15, lineHeight: 21},
   code: {
-    color: '#7ee787',
+    color: t.code,
     fontSize: 17,
     marginVertical: 12,
     fontFamily: 'monospace',
   },
-  upToDate: {color: '#4caf50', fontSize: 16, marginTop: 16},
+  upToDate: {color: t.success, fontSize: 16, marginTop: 16},
   backBtn: {
     marginTop: 28,
     alignSelf: 'flex-start',
-    backgroundColor: '#e50914',
+    backgroundColor: t.danger,
+    ...buttonBase,
     paddingHorizontal: 28,
     paddingVertical: 13,
     borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
   },
-  backText: {color: '#fff', fontSize: 18},
+  backText: {color: '#ffffff', fontSize: 18},
   card: {
-    backgroundColor: '#16161d',
+    backgroundColor: t.surface,
     borderRadius: 10,
     padding: 18,
     marginTop: 18,
   },
-  cardTitle: {color: '#fff', fontSize: 19, fontWeight: '600', marginBottom: 10},
-  statusLine: {color: '#b9b9c6', fontSize: 15, marginBottom: 10},
-  pcInfo: {color: '#7fd18c', fontSize: 14, marginBottom: 10},
+  cardTitle: {color: t.text, fontSize: 19, fontWeight: '600', marginBottom: 10},
+  statusLine: {color: t.textSoft, fontSize: 15, marginBottom: 10},
+  pcInfo: {color: t.code, fontSize: 14, marginBottom: 10},
   keypad: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12},
   key: {
     width: 68,
     height: 58,
     margin: 4,
     borderRadius: 8,
-    backgroundColor: '#23232d',
-    borderWidth: 4,
-    borderColor: 'transparent',
+    backgroundColor: t.surfaceKey,
+    ...buttonBase,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  keyFocused: {backgroundColor: '#e50914'},
-  keyText: {color: '#fff', fontSize: 24},
+  keyFocused: {backgroundColor: t.accent},
+  keyText: {color: t.text, fontSize: 24},
   installBtn: {
     marginTop: 16,
     alignSelf: 'flex-start',
-    backgroundColor: '#1c7d32',
+    backgroundColor: t.success,
+    ...buttonBase,
     paddingHorizontal: 24,
     paddingVertical: 13,
     borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
   },
   forgetBtn: {
     marginTop: 12,
     alignSelf: 'flex-start',
-    backgroundColor: '#3a2020',
+    backgroundColor: t.dangerSoft,
+    ...buttonBase,
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
   },
-  forgetText: {color: '#e57373', fontSize: 16},
+  forgetText: {color: t.dangerChipText, fontSize: 16},
   accessRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1a1a23',
+    backgroundColor: t.surfaceAlt,
     borderRadius: 8,
     borderWidth: 2,
-    borderColor: '#2a2a38',
+    borderColor: t.border,
     paddingHorizontal: 14,
     paddingVertical: 10,
     marginTop: 10,
   },
   accessMain: {flex: 1, paddingRight: 12},
-  accessApp: {color: '#fff', fontSize: 16, fontWeight: '600'},
-  accessMeta: {color: '#8b8b99', fontSize: 13, marginTop: 2},
+  accessApp: {color: t.text, fontSize: 16, fontWeight: '600'},
+  accessMeta: {color: t.textDim, fontSize: 13, marginTop: 2},
+  accessAllow: {color: t.code},
+  accessDeny: {color: t.dangerText},
   allowBtn: {
-    backgroundColor: '#1c7d32',
+    backgroundColor: t.success,
     borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     paddingHorizontal: 16,
     paddingVertical: 9,
     marginLeft: 8,
   },
   denyBtn: {
-    backgroundColor: '#3a2020',
+    backgroundColor: t.dangerSoft,
     borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     paddingHorizontal: 16,
     paddingVertical: 9,
     marginLeft: 8,
   },
-  accessBtnText: {color: '#fff', fontSize: 15, fontWeight: '600'},
+  accessBtnText: {color: '#ffffff', fontSize: 15, fontWeight: '600'},
+  denyBtnText: {color: t.dangerChipText, fontSize: 15, fontWeight: '600'},
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2021,97 +2239,166 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#16161d',
+    backgroundColor: t.surface,
     borderRadius: 10,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     paddingHorizontal: 18,
     paddingVertical: 14,
     marginRight: 12,
   },
-  searchText: {color: '#fff', fontSize: 18},
-  searchPlaceholder: {color: '#6f6f80'},
+  searchText: {color: t.text, fontSize: 18},
+  searchPlaceholder: {color: t.textMuted},
   refreshBtn: {
-    backgroundColor: '#16161d',
+    backgroundColor: t.surface,
     borderRadius: 10,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     paddingHorizontal: 26,
     paddingVertical: 14,
     alignSelf: 'flex-start',
   },
-  refreshText: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  refreshText: {color: t.text, fontSize: 18, fontWeight: '600'},
   updateAllBtn: {
-    backgroundColor: '#165a8c',
+    backgroundColor: t.accent,
     borderRadius: 10,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     paddingHorizontal: 22,
     paddingVertical: 14,
     marginRight: 12,
     alignSelf: 'flex-start',
   },
-  jobStrip: {color: '#8fb8d8', fontSize: 15, paddingHorizontal: 40, paddingBottom: 12},
-  jobStripWarn: {color: '#ffb300', fontSize: 15, paddingHorizontal: 40, paddingBottom: 12},
-  searchQuery: {color: '#fff', fontSize: 26, fontWeight: '600', marginTop: 8},
-  searchCount: {color: '#77778a', fontSize: 15, marginTop: 4},
+  jobStrip: {color: t.link, fontSize: 15, paddingHorizontal: 40, paddingBottom: 12},
+  jobStripWarn: {color: t.warn, fontSize: 15, paddingHorizontal: 40, paddingBottom: 12},
+  searchQuery: {color: t.text, fontSize: 26, fontWeight: '600', marginTop: 8},
+  searchCount: {color: t.textMuted, fontSize: 15, marginTop: 4},
   ctrlKey: {
     minWidth: 130,
     height: 58,
     margin: 4,
     paddingHorizontal: 20,
     borderRadius: 8,
-    backgroundColor: '#23232d',
-    borderWidth: 4,
-    borderColor: 'transparent',
+    backgroundColor: t.surfaceKey,
+    ...buttonBase,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  ctrlKeyText: {color: '#fff', fontSize: 20},
+  ctrlKeyText: {color: t.text, fontSize: 20},
   // Power tools: action rows, the output panel, and the red danger label.
   toolRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1a1a23',
+    backgroundColor: t.surfaceAlt,
     borderRadius: 8,
-    borderWidth: 4,
-    borderColor: 'transparent',
+    ...buttonBase,
     paddingHorizontal: 16,
     paddingVertical: 14,
     marginTop: 10,
   },
   toolMain: {flex: 1, paddingRight: 12},
-  toolTitle: {color: '#fff', fontSize: 18, fontWeight: '600'},
-  toolSummary: {color: '#8b8b99', fontSize: 14, marginTop: 2},
-  toolDanger: {color: '#e57373'},
-  toolOpen: {color: '#8fb8d8', fontSize: 15, fontWeight: '600'},
+  toolTitle: {color: t.text, fontSize: 18, fontWeight: '600'},
+  toolSummary: {color: t.textDim, fontSize: 14, marginTop: 2},
+  toolDanger: {color: t.dangerText},
+  toolOpen: {color: t.link, fontSize: 15, fontWeight: '600'},
   toolOut: {
     marginTop: 14,
-    backgroundColor: '#101018',
+    backgroundColor: t.surfaceDeep,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#2a2a38',
+    borderColor: t.border,
     padding: 14,
   },
-  toolOutTitle: {color: '#7ee787', fontSize: 14, fontWeight: '600', marginBottom: 8},
-  toolOutText: {color: '#c9c9d6', fontSize: 13, fontFamily: 'monospace', lineHeight: 19},
-  /**
-   * The TV focus ring: a thick amber border plus a glow, appended by every
-   * focusable when focused (without it the selected control is hard to see on
-   * this dark UI). Bases above carry a transparent 4px border so focusing
-   * never shifts layout.
-   */
+  toolOutTitle: {color: t.code, fontSize: 14, fontWeight: '600', marginBottom: 8},
+  toolOutText: {color: t.textBody, fontSize: 13, fontFamily: 'monospace', lineHeight: 19},
   focused: {
-    borderColor: '#ffb02e',
-    shadowColor: '#ffb02e',
-    shadowOpacity: 0.85,
-    shadowRadius: 10,
-    shadowOffset: {width: 0, height: 0},
-    elevation: 10,
+    borderWidth: 4,
+    borderColor: t.focus,
+    // "Flat" keeps a crisp ring; "glow" and "outline" add the halo.
+    ...(t.buttonEffect === 'flat'
+      ? {}
+      : {
+          shadowColor: t.focus,
+          shadowOpacity: 0.85,
+          shadowRadius: 10,
+          shadowOffset: {width: 0, height: 0},
+          elevation: 10,
+        }),
   },
   job: {marginTop: 14},
-  jobStatus: {color: '#7ee787', fontSize: 15, marginBottom: 6},
-  jobLine: {color: '#8b8b99', fontSize: 12, fontFamily: 'monospace'},
+  jobStatus: {color: t.code, fontSize: 15, marginBottom: 6},
+  jobLine: {color: t.textDim, fontSize: 12, fontFamily: 'monospace'},
+  // Themes screen.
+  sectionTitle: {color: t.text, fontSize: 20, fontWeight: '600', marginTop: 24, marginBottom: 6},
+  sectionHint: {color: t.textDim, fontSize: 14, marginBottom: 10},
+  presetGrid: {flexDirection: 'row', flexWrap: 'wrap'},
+  presetCard: {
+    width: 260,
+    backgroundColor: t.surface,
+    borderRadius: 10,
+    ...buttonBase,
+    padding: 14,
+    marginRight: 12,
+    marginBottom: 12,
+  },
+  presetCardOn: {borderWidth: 4, borderColor: t.focus},
+  presetSwatches: {flexDirection: 'row', marginBottom: 12},
+  presetDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: t.border,
+  },
+  presetName: {color: t.text, fontSize: 16, fontWeight: '600'},
+  presetState: {color: t.textDim, fontSize: 13, marginTop: 4},
+  swatchGrid: {flexDirection: 'row', flexWrap: 'wrap'},
+  swatch: {
+    width: 54,
+    height: 54,
+    borderRadius: 12,
+    marginRight: 12,
+    marginBottom: 12,
+    ...buttonBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swatchOn: {borderWidth: 4, borderColor: t.focus},
+  swatchCheck: {width: 16, height: 16, borderRadius: 8, backgroundColor: t.focus},
+  chipRow: {flexDirection: 'row', flexWrap: 'wrap'},
+  chip: {
+    backgroundColor: t.surface,
+    borderRadius: 8,
+    ...buttonBase,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    marginRight: 12,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
+  },
+  chipOn: {backgroundColor: t.accent},
+  chipText: {color: t.text, fontSize: 16, fontWeight: '600'},
+  chipOnText: {color: t.accentText},
+  themeActions: {flexDirection: 'row', alignItems: 'center', marginTop: 8},
 });
+};
+
+/**
+ * The backdrops (animated background) always sit one layer below the current
+ * screen, so an effect never covers content or grabs D-pad focus from a row.
+ */
+const Shell = () => {
+  const {styles} = useAppTheme();
+  return (
+    <View style={styles.root}>
+      <Backdrop />
+      <Hub />
+    </View>
+  );
+};
+
+export const App = () => (
+  <ThemeProvider makeStyles={makeStyles}>
+    <Shell />
+  </ThemeProvider>
+);
 
 export default App;
