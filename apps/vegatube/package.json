@@ -1,6 +1,6 @@
 {
   "name": "@fyaisa/vegatube",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks (FYAISA hub app).",
   "author": "FYAISA contributors",
@@ -27,8 +27,7 @@
     "@amazon-devices/react-native-kepler": "^4.0.0",
     "@amazon-devices/webview": "^4.0.0",
     "react": "19.2.0",
-    "react-native": "0.83.0",
-    "@amazon-devices/kepler-file-system": "^0.0.7"
+    "react-native": "0.83.0"
   },
   "engines": {
     "node": ">=20"

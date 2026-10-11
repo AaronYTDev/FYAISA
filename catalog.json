@@ -129,7 +129,7 @@
       "id": "app.vegatube.main",
       "name": "VegaTube",
       "summary": "Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks.",
-      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega; VegaTube is the FYAISA example app, with hub updates built in.",
+      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega; VegaTube is the reference app for the hub's WebView injection technique (it ships without the ElevSH pairing client — ElevSH Files has that).",
       "path": "apps/vegatube",
       "patch": {
         "for": "com.amazon.firetv.youtube.main",
@@ -156,7 +156,7 @@
       "requiresNetwork": true,
       "drm": true,
       "status": "stable",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "updated": "2026-10-11",
       "install": {
         "kind": "vpkg-release",
@@ -165,7 +165,7 @@
       },
       "notes": [
         "Contains a vendored copy of the TizenTube userscript (GPL-3.0); upstream credits live in the repos.",
-        "The FYAISA example app: pair with your PC for the in-app update menu, or use `fyaisa update app.vegatube.main`.",
+        "Updates install on the TV via `fyaisa update app.vegatube.main` (no in-app pairing); the ElevSH client lives in ElevSH Files.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },
@@ -195,8 +195,8 @@
       "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.0.0",
-      "updated": "2026-10-09",
+      "version": "1.1.0",
+      "updated": "2026-10-11",
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
@@ -204,6 +204,7 @@
       },
       "notes": [
         "Pairs with ElevSH like every FYAISA app; approve it in FYAISA \u2192 ElevSH or with `fyaisa approve <code>`.",
+        "Themed like the hub: 8 presets plus per-setting customisation (colours, button style, animated background), persisted on the TV.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },

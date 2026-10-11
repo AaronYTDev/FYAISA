@@ -2,7 +2,7 @@ schema-version = 1
 
 [package]
 title = "VegaTube"
-version = "1.2.0"
+version = "1.3.0"
 id = "app.vegatube"
 icon = "@image/vegatube.png"
 

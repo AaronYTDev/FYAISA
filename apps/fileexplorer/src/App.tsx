@@ -20,6 +20,10 @@
  * the request comes from this TV; otherwise the user approves in FYAISA →
  * ElevSH (or `fyaisa approve <code>` on the PC). Pairing persists in
  * /data/bridge.json.
+ *
+ * Theming: same engine as the hub — 8 presets plus per-setting customisation
+ * (colours, button style, animated background), persisted to /data/theme.json
+ * (see src/theme.tsx). App logos and tile art are never restyled.
  */
 import * as React from 'react';
 import {useCallback, useEffect, useMemo, useState} from 'react';
@@ -38,6 +42,19 @@ import {
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
 } from '@amazon-devices/react-native-kepler';
+import {
+  ThemeProvider,
+  useAppTheme,
+  ACCENT_SWATCHES,
+  BACKGROUNDS,
+  BG_SWATCHES,
+  BUTTON_EFFECTS,
+  ENERGIES,
+  PRESET_LIST,
+  SURFACE_SWATCHES,
+} from './theme';
+import type {ResolvedTheme} from './theme';
+import {Backdrop} from './Backdrop';
 
 const BRIDGE_PORT = 47821;
 const APP_ID = 'app.fyaisa.files.main';
@@ -163,11 +180,18 @@ const humanSize = (n: number | null): string => {
 // D-pad-friendly keypad for typing a dotted IPv4 address / hostname.
 const HOST_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.', '⌫'];
 
-/** Wrap a base style so a Pressable renders the TV focus ring when focused. */
-const focusable = (base: any) => ({focused}: {focused: boolean}) =>
-  [base, focused && styles.focused];
+/** Wrap a base style so a Pressable renders the theme's TV focus ring. */
+const useFocusable = () => {
+  const {styles} = useAppTheme();
+  return useCallback(
+    (base: any) => ({focused}: {focused: boolean}) => [base, focused && styles.focused],
+    [styles],
+  );
+};
 
-export const App = () => {
+const FilesApp = () => {
+  const {styles, theme} = useAppTheme();
+  const focusable = useFocusable();
   usePreventHideSplashScreen();
   const hideSplashScreenCallback = useHideSplashScreenCallback();
 
@@ -178,6 +202,8 @@ export const App = () => {
   const [busy, setBusy] = useState(false);
   /** Live ElevSH access verdict for this app (shown while on setup). */
   const [accessLine, setAccessLine] = useState<string | null>(null);
+  /** Themes screen is open (full-screen picker; Back closes it). */
+  const [themesOpen, setThemesOpen] = useState(false);
 
   const [path, setPath] = useState('/');
   const [entries, setEntries] = useState<Entry[] | null>(null);
@@ -402,9 +428,14 @@ export const App = () => {
     [path, loadDir, runCmd],
   );
 
-  // Remote Back: viewer → listing, directory → parent, root → exit (setup → exit).
+  // Remote Back: themes → previous screen, viewer → listing, directory →
+  // parent, root → exit (setup → exit).
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (themesOpen) {
+        setThemesOpen(false);
+        return true;
+      }
       if (phase === 'setup') return false;
       if (viewer) {
         setViewer(null);
@@ -417,7 +448,14 @@ export const App = () => {
       return false;
     });
     return () => sub.remove();
-  }, [phase, viewer, path, loadDir]);
+  }, [phase, viewer, path, loadDir, themesOpen]);
+
+  // -------------------------------------------------------------------------
+  // Themes (presets + per-setting customisation)
+  // -------------------------------------------------------------------------
+  if (themesOpen) {
+    return <ThemesView onBack={() => setThemesOpen(false)} />;
+  }
 
   // -------------------------------------------------------------------------
   // Setup screen
@@ -469,10 +507,25 @@ export const App = () => {
             <Text style={styles.statusLine}>Status: {status}</Text>
             {accessLine ? <Text style={styles.accessLine}>{accessLine}</Text> : null}
             {busy ? (
-              <ActivityIndicator size="large" color="#fff" style={{marginTop: 12}} />
+              <ActivityIndicator
+                size="large"
+                color={theme.palette.text}
+                style={{marginTop: 12}}
+              />
             ) : null}
             <Pressable style={focusable(styles.connectBtn)} onPress={connect} disabled={busy}>
               <Text style={styles.backText}>{busy ? 'Working…' : 'Connect'}</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Step 4 — make it yours</Text>
+            <Text style={styles.howtoBody}>
+              Pick a preset or dial in your own colours and effects — the choice
+              is saved on this TV.
+            </Text>
+            <Pressable style={focusable(styles.row)} onPress={() => setThemesOpen(true)}>
+              <Text style={[styles.rowName, styles.rowRefresh]}>Open Themes…</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -498,7 +551,7 @@ export const App = () => {
         <ScrollView contentContainerStyle={styles.list}>
           {viewer.loading ? (
             <View style={styles.loadingBlock}>
-              <ActivityIndicator size="large" color="#fff" />
+              <ActivityIndicator size="large" color={theme.palette.text} />
               <Text style={styles.dim}>Reading file…</Text>
             </View>
           ) : viewer.error ? (
@@ -553,7 +606,7 @@ export const App = () => {
 
         {listBusy && !entries ? (
           <View style={styles.loadingBlock}>
-            <ActivityIndicator size="large" color="#fff" />
+            <ActivityIndicator size="large" color={theme.palette.text} />
             <Text style={styles.dim}>Listing {path}…</Text>
           </View>
         ) : null}
@@ -599,9 +652,20 @@ export const App = () => {
           <Text style={[styles.rowName, styles.rowRefresh]}>Refresh</Text>
         </Pressable>
 
+        <Pressable
+          focusable
+          style={({focused}) => [
+            styles.row,
+            focused && styles.rowFocused,
+            focused && styles.focused,
+          ]}
+          onPress={() => setThemesOpen(true)}>
+          <Text style={[styles.rowName, styles.rowRefresh]}>Themes…</Text>
+        </Pressable>
+
         {listBusy && entries ? (
           <View style={styles.loadingBlock}>
-            <ActivityIndicator size="large" color="#fff" />
+            <ActivityIndicator size="large" color={theme.palette.text} />
             <Text style={styles.dim}>Reloading…</Text>
           </View>
         ) : null}
@@ -610,100 +674,377 @@ export const App = () => {
   );
 };
 
-const styles = StyleSheet.create({
-  wrap: {flex: 1, backgroundColor: '#0b0b0f'},
-  header: {paddingHorizontal: 40, paddingTop: 32, paddingBottom: 14},
-  brand: {color: '#fff', fontSize: 40, fontWeight: '700'},
-  brandSmall: {color: '#fff', fontSize: 26, fontWeight: '700'},
-  tagline: {color: '#8b8b99', fontSize: 17, marginTop: 6},
-  path: {color: '#7ee787', fontSize: 18, fontFamily: 'monospace', marginTop: 8},
-  hostLine: {color: '#6f6f80', fontSize: 14, marginTop: 3},
-  dim: {color: '#77778a', fontSize: 16, marginTop: 12},
-  warn: {color: '#ffb300', fontSize: 15, marginTop: 6, lineHeight: 21},
-  list: {paddingHorizontal: 40, paddingBottom: 40},
-  loadingBlock: {alignItems: 'center', paddingVertical: 24},
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#16161d',
-    borderRadius: 8,
-    borderWidth: 4,
-    borderColor: 'transparent',
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  rowFocused: {backgroundColor: '#1e1e28'},
-  rowName: {flex: 1, color: '#b9b9c6', fontSize: 19, fontFamily: 'monospace'},
-  rowDir: {color: '#fff', fontWeight: '600'},
-  rowRefresh: {color: '#9fd0ff'},
-  rowSize: {color: '#6f6f80', fontSize: 14, marginLeft: 12, fontFamily: 'monospace'},
-  viewerTitle: {color: '#fff', fontSize: 30, fontWeight: '700'},
-  viewerMeta: {color: '#6f6f80', fontSize: 14, marginTop: 4, fontFamily: 'monospace'},
-  mono: {color: '#c9c9d6', fontSize: 15, lineHeight: 21, fontFamily: 'monospace'},
-  card: {
-    backgroundColor: '#16161d',
-    borderRadius: 10,
-    padding: 18,
-    marginTop: 18,
-  },
-  cardTitle: {color: '#fff', fontSize: 19, fontWeight: '600', marginBottom: 10},
-  howtoBody: {color: '#a9a9b8', fontSize: 15, lineHeight: 21},
-  code: {
-    color: '#7ee787',
-    fontSize: 17,
-    marginVertical: 12,
-    fontFamily: 'monospace',
-  },
-  statusLine: {color: '#b9b9c6', fontSize: 15, marginBottom: 8},
-  accessLine: {color: '#7fd18c', fontSize: 14, marginBottom: 4},
-  keypad: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12},
-  key: {
-    width: 68,
-    height: 58,
-    margin: 4,
-    borderRadius: 8,
-    backgroundColor: '#23232d',
-    borderWidth: 4,
-    borderColor: 'transparent',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  keyFocused: {backgroundColor: '#e50914'},
-  keyText: {color: '#fff', fontSize: 24},
-  connectBtn: {
-    marginTop: 16,
-    alignSelf: 'flex-start',
-    backgroundColor: '#1c7d32',
-    paddingHorizontal: 24,
-    paddingVertical: 13,
-    borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
-  },
-  backBtn: {
-    marginTop: 24,
-    alignSelf: 'flex-start',
-    backgroundColor: '#e50914',
-    paddingHorizontal: 28,
-    paddingVertical: 13,
-    borderRadius: 6,
-    borderWidth: 4,
-    borderColor: 'transparent',
-  },
-  backText: {color: '#fff', fontSize: 18},
-  /**
-   * The TV focus ring — every focusable appends this when focused. Bases
-   * carry a transparent 4px border so focusing never shifts layout.
-   */
-  focused: {
-    borderColor: '#ffb02e',
-    shadowColor: '#ffb02e',
-    shadowOpacity: 0.85,
-    shadowRadius: 10,
-    shadowOffset: {width: 0, height: 0},
-    elevation: 10,
-  },
-});
+/**
+ * A row of colour choices on the Themes screen. The active one gets a focus
+ * -coloured ring; focus (not selection) comes from the shared `focused` style.
+ */
+const SwatchGrid = ({
+  colors,
+  value,
+  onPick,
+}: {
+  colors: string[];
+  value: string;
+  onPick: (color: string) => void;
+}) => {
+  const {styles} = useAppTheme();
+  const active = String(value).toLowerCase();
+  return (
+    <View style={styles.swatchGrid}>
+      {colors.map(c => {
+        const on = c.toLowerCase() === active;
+        return (
+          <Pressable
+            key={c}
+            focusable
+            style={({focused}) => [
+              styles.swatch,
+              {backgroundColor: c},
+              on && styles.swatchOn,
+              focused && styles.focused,
+            ]}
+            onPress={() => onPick(c)}>
+            {on ? <View style={styles.swatchCheck} /> : null}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+};
+
+/**
+ * Full-screen theme picker: 8 presets, then per-setting customisation
+ * (accent / background / panel colours, button style, background effect and
+ * motion). Back, or the Back button, returns to wherever it was opened from.
+ */
+const ThemesView = ({onBack}: {onBack: () => void}) => {
+  const {styles, theme, applyPreset, patch, resetTheme} = useAppTheme();
+  const focusable = useFocusable();
+  return (
+    <View style={styles.wrap}>
+      <View style={styles.header}>
+        <Text style={styles.brand}>Themes</Text>
+        <Text style={styles.tagline}>
+          Make it yours: pick a preset, or dial in your own colours and
+          effects. App logos are never restyled.
+        </Text>
+      </View>
+      <ScrollView contentContainerStyle={styles.list}>
+        <Text style={styles.sectionTitle}>Presets</Text>
+        <View style={styles.presetGrid}>
+          {PRESET_LIST.map((p, i) => (
+            <Pressable
+              key={p.preset}
+              hasTVPreferredFocus={i === 0}
+              focusable
+              style={({focused}) => [
+                styles.presetCard,
+                theme.preset === p.preset && styles.presetCardOn,
+                focused && styles.focused,
+              ]}
+              onPress={() => applyPreset(p.preset)}>
+              <View style={styles.presetSwatches}>
+                <View style={[styles.presetDot, {backgroundColor: p.palette.bg}]} />
+                <View style={[styles.presetDot, {backgroundColor: p.palette.surface}]} />
+                <View style={[styles.presetDot, {backgroundColor: p.palette.accent}]} />
+                <View style={[styles.presetDot, {backgroundColor: p.palette.focus}]} />
+              </View>
+              <Text style={styles.presetName}>{p.name}</Text>
+              <Text style={styles.presetState}>
+                {theme.preset === p.preset ? 'Active' : 'Select'} · {p.background} ·{' '}
+                {p.buttonEffect}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <Text style={styles.sectionTitle}>Accent color</Text>
+        <Text style={styles.sectionHint}>Buttons and highlights.</Text>
+        <SwatchGrid
+          colors={ACCENT_SWATCHES}
+          value={theme.palette.accent}
+          onPick={c => patch({palette: {accent: c}})}
+        />
+
+        <Text style={styles.sectionTitle}>Background color</Text>
+        <SwatchGrid
+          colors={BG_SWATCHES}
+          value={theme.palette.bg}
+          onPick={c => patch({palette: {bg: c}})}
+        />
+
+        <Text style={styles.sectionTitle}>Panel color</Text>
+        <Text style={styles.sectionHint}>Cards, rows and the keypad.</Text>
+        <SwatchGrid
+          colors={SURFACE_SWATCHES}
+          value={theme.palette.surface}
+          onPick={c => patch({palette: {surface: c}})}
+        />
+
+        <Text style={styles.sectionTitle}>Button style</Text>
+        <View style={styles.chipRow}>
+          {BUTTON_EFFECTS.map(e => (
+            <Pressable
+              key={e.id}
+              focusable
+              style={({focused}) => [
+                styles.chip,
+                theme.buttonEffect === e.id && styles.chipOn,
+                focused && styles.focused,
+              ]}
+              onPress={() => patch({buttonEffect: e.id})}>
+              <Text style={[styles.chipText, theme.buttonEffect === e.id && styles.chipOnText]}>
+                {e.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <Text style={styles.sectionTitle}>Background effect</Text>
+        <View style={styles.chipRow}>
+          {BACKGROUNDS.map(b => (
+            <Pressable
+              key={b.id}
+              focusable
+              style={({focused}) => [
+                styles.chip,
+                theme.background === b.id && styles.chipOn,
+                focused && styles.focused,
+              ]}
+              onPress={() => patch({background: b.id})}>
+              <Text style={[styles.chipText, theme.background === b.id && styles.chipOnText]}>
+                {b.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {theme.background !== 'none' ? (
+          <>
+            <Text style={styles.sectionTitle}>Motion</Text>
+            <View style={styles.chipRow}>
+              {ENERGIES.map(e => (
+                <Pressable
+                  key={e.id}
+                  focusable
+                  style={({focused}) => [
+                    styles.chip,
+                    theme.energy === e.id && styles.chipOn,
+                    focused && styles.focused,
+                  ]}
+                  onPress={() => patch({energy: e.id})}>
+                  <Text style={[styles.chipText, theme.energy === e.id && styles.chipOnText]}>
+                    {e.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </>
+        ) : null}
+
+        <View style={styles.themeActions}>
+          <Pressable style={focusable(styles.forgetBtn)} onPress={resetTheme}>
+            <Text style={styles.forgetText}>Reset to Classic</Text>
+          </Pressable>
+          <Pressable style={focusable(styles.backBtn)} onPress={onBack}>
+            <Text style={styles.backText}>Back</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+    </View>
+  );
+};
+
+const makeStyles = (t: ResolvedTheme) => {
+  // A button's resting border, so "Outline" reads outlined and the rest stay
+  // flush with the surface (a transparent 4px border keeps the layout stable
+  // when the focus ring appears).
+  const buttonBase =
+    t.buttonEffect === 'outline'
+      ? {borderWidth: 2, borderColor: t.border}
+      : {borderWidth: 4, borderColor: 'transparent'};
+
+  return StyleSheet.create({
+    root: {flex: 1, backgroundColor: t.bg},
+    wrap: {flex: 1},
+    header: {paddingHorizontal: 40, paddingTop: 32, paddingBottom: 14},
+    brand: {color: t.text, fontSize: 40, fontWeight: '700'},
+    brandSmall: {color: t.text, fontSize: 26, fontWeight: '700'},
+    tagline: {color: t.textDim, fontSize: 17, marginTop: 6},
+    path: {color: t.code, fontSize: 18, fontFamily: 'monospace', marginTop: 8},
+    hostLine: {color: t.textMuted, fontSize: 14, marginTop: 3},
+    dim: {color: t.textMuted, fontSize: 16, marginTop: 12},
+    warn: {color: t.warn, fontSize: 15, marginTop: 6, lineHeight: 21},
+    list: {paddingHorizontal: 40, paddingBottom: 40},
+    loadingBlock: {alignItems: 'center', paddingVertical: 24},
+    row: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: t.surface,
+      borderRadius: 8,
+      ...buttonBase,
+      paddingVertical: 13,
+      paddingHorizontal: 16,
+      marginBottom: 8,
+    },
+    rowFocused: {backgroundColor: t.surfaceAlt},
+    rowName: {flex: 1, color: t.textSoft, fontSize: 19, fontFamily: 'monospace'},
+    rowDir: {color: t.text, fontWeight: '600'},
+    rowRefresh: {color: t.link},
+    rowSize: {color: t.textMuted, fontSize: 14, marginLeft: 12, fontFamily: 'monospace'},
+    viewerTitle: {color: t.text, fontSize: 30, fontWeight: '700'},
+    viewerMeta: {color: t.textMuted, fontSize: 14, marginTop: 4, fontFamily: 'monospace'},
+    mono: {color: t.textBody, fontSize: 15, lineHeight: 21, fontFamily: 'monospace'},
+    card: {
+      backgroundColor: t.surface,
+      borderRadius: 10,
+      padding: 18,
+      marginTop: 18,
+    },
+    cardTitle: {color: t.text, fontSize: 19, fontWeight: '600', marginBottom: 10},
+    howtoBody: {color: t.textBody, fontSize: 15, lineHeight: 21},
+    code: {
+      color: t.code,
+      fontSize: 17,
+      marginVertical: 12,
+      fontFamily: 'monospace',
+    },
+    statusLine: {color: t.textSoft, fontSize: 15, marginBottom: 8},
+    accessLine: {color: t.success, fontSize: 14, marginBottom: 4},
+    keypad: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12},
+    key: {
+      width: 68,
+      height: 58,
+      margin: 4,
+      borderRadius: 8,
+      backgroundColor: t.surfaceKey,
+      ...buttonBase,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    keyFocused: {backgroundColor: t.accent},
+    keyText: {color: t.text, fontSize: 24},
+    connectBtn: {
+      marginTop: 16,
+      alignSelf: 'flex-start',
+      backgroundColor: t.success,
+      ...buttonBase,
+      paddingHorizontal: 24,
+      paddingVertical: 13,
+      borderRadius: 6,
+    },
+    backBtn: {
+      marginTop: 24,
+      alignSelf: 'flex-start',
+      backgroundColor: t.danger,
+      ...buttonBase,
+      paddingHorizontal: 28,
+      paddingVertical: 13,
+      borderRadius: 6,
+    },
+    backText: {color: '#ffffff', fontSize: 18},
+    forgetBtn: {
+      marginTop: 12,
+      alignSelf: 'flex-start',
+      backgroundColor: t.dangerSoft,
+      ...buttonBase,
+      paddingHorizontal: 20,
+      paddingVertical: 10,
+      borderRadius: 6,
+    },
+    forgetText: {color: t.dangerChipText, fontSize: 16},
+    /**
+     * The theme's TV focus ring — every focusable appends this when focused.
+     * Bases carry a transparent 4px border so focusing never shifts layout;
+     * "flat" keeps a crisp ring, "glow"/"outline" add the halo.
+     */
+    focused: {
+      borderWidth: 4,
+      borderColor: t.focus,
+      ...(t.buttonEffect === 'flat'
+        ? {}
+        : {
+            shadowColor: t.focus,
+            shadowOpacity: 0.85,
+            shadowRadius: 10,
+            shadowOffset: {width: 0, height: 0},
+            elevation: 10,
+          }),
+    },
+    // Themes screen.
+    sectionTitle: {color: t.text, fontSize: 20, fontWeight: '600', marginTop: 24, marginBottom: 6},
+    sectionHint: {color: t.textDim, fontSize: 14, marginBottom: 10},
+    presetGrid: {flexDirection: 'row', flexWrap: 'wrap'},
+    presetCard: {
+      width: 260,
+      backgroundColor: t.surface,
+      borderRadius: 10,
+      ...buttonBase,
+      padding: 14,
+      marginRight: 12,
+      marginBottom: 12,
+    },
+    presetCardOn: {borderWidth: 4, borderColor: t.focus},
+    presetSwatches: {flexDirection: 'row', marginBottom: 12},
+    presetDot: {
+      width: 26,
+      height: 26,
+      borderRadius: 13,
+      marginRight: 8,
+      borderWidth: 1,
+      borderColor: t.border,
+    },
+    presetName: {color: t.text, fontSize: 16, fontWeight: '600'},
+    presetState: {color: t.textDim, fontSize: 13, marginTop: 4},
+    swatchGrid: {flexDirection: 'row', flexWrap: 'wrap'},
+    swatch: {
+      width: 54,
+      height: 54,
+      borderRadius: 12,
+      marginRight: 12,
+      marginBottom: 12,
+      ...buttonBase,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    swatchOn: {borderWidth: 4, borderColor: t.focus},
+    swatchCheck: {width: 16, height: 16, borderRadius: 8, backgroundColor: t.focus},
+    chipRow: {flexDirection: 'row', flexWrap: 'wrap'},
+    chip: {
+      backgroundColor: t.surface,
+      borderRadius: 8,
+      ...buttonBase,
+      paddingHorizontal: 22,
+      paddingVertical: 12,
+      marginRight: 12,
+      marginBottom: 12,
+      alignSelf: 'flex-start',
+    },
+    chipOn: {backgroundColor: t.accent},
+    chipText: {color: t.text, fontSize: 16, fontWeight: '600'},
+    chipOnText: {color: t.accentText},
+    themeActions: {flexDirection: 'row', alignItems: 'center', marginTop: 8},
+  });
+};
+
+/**
+ * Root: paints the (animated) background, then the active screen on top of it.
+ * The backdrop never takes input, so D-pad focus behaves exactly as before.
+ */
+const Shell = () => {
+  const {styles} = useAppTheme();
+  return (
+    <View style={styles.root}>
+      <Backdrop />
+      <FilesApp />
+    </View>
+  );
+};
+
+export const App = () => (
+  <ThemeProvider makeStyles={makeStyles}>
+    <Shell />
+  </ThemeProvider>
+);
 
 export default App;
