@@ -35,6 +35,14 @@ The pairing is remembered (across restarts and reboots). D-pad navigation:
 **Enter** opens a directory or previews a file, **Back** goes up a directory
 (or closes the preview), and a `Refresh` row re-lists the current path.
 
+## Themes
+
+Ported from the hub: pick one of the 8 presets, or dial in your own accent,
+background and panel colours plus button style and animated background effect.
+Everything persists on the TV (`/data/theme.json`). Open the picker from the
+**Themes…** row while browsing, or from "Step 4 — make it yours" on the
+pairing screen; Back closes it. App logos and tile art are never restyled.
+
 ## Notes and limits
 
 - Previews are the first 64 KB of a file, rendered up to ~20 000

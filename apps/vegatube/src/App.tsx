@@ -6,11 +6,10 @@
  * upstream TizenTube userscript (ad block, SponsorBlock, DeArrow, speed
  * controls, theming) at document-start via a small native-bridge shim.
  *
- * VegaTube is the FYAISA example app: it demonstrates how a homebrew Vega app
- * uses the FYAISA bridge (`fyaisa connect`); the startup menu checks the hub
- * for new versions and can rebuild + reinstall itself on the Fire TV over
- * ElevSH, the PC connection FYAISA manages. See src/fyaisaClient.ts and
- * docs/HOMEBREW.md §6.
+ * VegaTube is the FYAISA example app: it proved out the Vega OS WebView
+ * injection technique the hub is built on. It deliberately does not ship the
+ * FYAISA (ElevSH) pairing client — ElevSH Files (apps/fileexplorer) is the
+ * reference app for that. See docs/HOMEBREW.md.
  *
  * This mirrors how TizenTube Standalone works on Samsung Tizen (a bare app
  * container around youtube.com/tv + script injection) and how TizenTube
@@ -31,8 +30,6 @@ import {
   usePreventHideSplashScreen,
   Pressable as KeplerPressable,
 } from '@amazon-devices/react-native-kepler';
-import {KeplerFileSystem} from '@amazon-devices/kepler-file-system';
-import {Fyaisa, FyaisaError} from './fyaisaClient';
 import {
   WebViewErrorEvent,
   WebViewHttpErrorEvent,
@@ -60,16 +57,6 @@ const TV_USER_AGENT =
   'com.google.android.youtube.tv/5.30.301';
 
 const YOUTUBE_TV_URL = 'https://www.youtube.com/tv';
-
-// --- FYAISA integration (see docs/HOMEBREW.md §6) ---------------------------
-const BRIDGE_PORT = 47821;
-/** Our hub id; the bridge rebuilds + reinstalls this app from the catalog. */
-const VEGATUBE_APP_ID = 'app.vegatube.main';
-/** Published catalog; used for the update check (no pairing required). */
-const HUB_CATALOG_URL =
-  'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json';
-/** Pairing persistence in this app's private sandbox (/data is per-app). */
-const STORE_PATH = '/data/bridge.json';
 
 // Cold-start retry policy (see handleFailure).
 const MAX_AUTO_RETRIES = 4;
@@ -281,46 +268,6 @@ const isMainFrameUrl = (url?: string): boolean => {
   }
 };
 
-// --- ElevSH pairing persistence (KeplerFileSystem; /data is per-app) --------
-/** token is optional: the host is remembered after first typing, even while
- *  waiting for FYAISA to Allow this app; the token arrives on auto-pair. */
-type SavedPair = {host: string; token?: string};
-
-const savePair = async (p: SavedPair) => {
-  try {
-    // writeStringToFile fails with AlreadyExistsError if the file is there,
-    // so remove first (the pairing file is tiny; atomicity doesn't matter).
-    await KeplerFileSystem.removeFile(STORE_PATH).catch(() => {});
-    await KeplerFileSystem.writeStringToFile(STORE_PATH, JSON.stringify(p), 'UTF-8');
-    console.info(`[VegaTube] ElevSH pairing saved (${p.host}${p.token ? '' : ', host only'})`);
-  } catch (e: any) {
-    console.error(`[VegaTube] could not save pairing: ${e?.message || e}`);
-  }
-};
-
-const loadPair = async (): Promise<SavedPair | null> => {
-  try {
-    if (!(await KeplerFileSystem.exists(STORE_PATH))) {
-      return null;
-    }
-    const p = JSON.parse(await KeplerFileSystem.readFileAsString(STORE_PATH, 'UTF-8'));
-    return p && p.host ? (p as SavedPair) : null;
-  } catch {
-    return null;
-  }
-};
-
-const clearPair = async () => {
-  try {
-    await KeplerFileSystem.removeFile(STORE_PATH);
-  } catch {
-    // Nothing to forget.
-  }
-};
-
-/** D-pad keypad for typing the computer address (dots and backspace). */
-const HOST_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'];
-
 /**
  * TV focus ring, same treatment as the FYAISA app: a thick amber border plus
  * a glow so the selected control is obvious from the couch. focusBase keeps a
@@ -328,8 +275,6 @@ const HOST_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫']
  */
 const focusRing = ({focused}: {focused: boolean}) =>
   [styles.focusBase, focused && styles.focusedRing];
-const menuFocus = ({focused}: {focused: boolean}) =>
-  [styles.menuBtnWrap, focusRing({focused})];
 
 export const App = () => {
   const webRef = useRef(null);
@@ -347,16 +292,6 @@ export const App = () => {
   const autoRetryRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const backDeliveredRef = useRef(true);
-
-  // FYAISA panel (startup menu): hub status, update check, ElevSH pairing.
-  const [menu, setMenu] = useState<'hidden' | 'menu' | 'pair'>('menu');
-  const [pair, setPair] = useState<SavedPair | null>(null);
-  const [pairHost, setPairHost] = useState('');
-  const [pairCode, setPairCode] = useState<string | null>(null);
-  const [hubStatus, setHubStatus] = useState('Checking the FYAISA hub…');
-  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
-  const [job, setJob] = useState<{status: string; log: string[]} | null>(null);
-  const menuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     console.info(
@@ -404,88 +339,6 @@ export const App = () => {
     });
     return () => sub.remove();
   }, []);
-
-  // FYAISA panel: load saved pairing + check the hub for a new VegaTube
-  // version. The update check runs against the published catalog (no pairing
-  // needed); installing the update requires ElevSH (the paired bridge).
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(HUB_CATALOG_URL);
-        const cat = await res.json();
-        if (cancelled) {
-          return;
-        }
-        const entry = (cat.apps || []).find((a: any) => a.id === VEGATUBE_APP_ID);
-        const hubVersion = entry?.version;
-        console.info(
-          `[VegaTube] hub check: ${(cat.apps || []).length} app(s), catalog VegaTube ${
-            hubVersion ? `v${hubVersion}` : 'not listed'
-          }`,
-        );
-        setHubStatus(
-          `FYAISA hub: ${(cat.apps || []).length} app(s) · VegaTube ${
-            hubVersion ? `v${hubVersion}` : 'listed'
-          }`,
-        );
-        if (hubVersion && hubVersion !== APP_VERSION) {
-          setUpdateVersion(hubVersion);
-          console.info(`[VegaTube] update available: v${APP_VERSION} -> v${hubVersion}`);
-        }
-      } catch {
-        if (!cancelled) {
-          setHubStatus('FYAISA hub unreachable (offline?)');
-        }
-      }
-
-      const saved = await loadPair();
-      if (cancelled || !saved) {
-        return;
-      }
-      if (saved.token) {
-        setPair(saved);
-        verifyPair(saved);
-        return;
-      }
-      // Host known from an earlier visit but no token yet: pair automatically.
-      // First time, FYAISA has to Allow this app; after that the bridge
-      // approves these requests by itself (allowed app + the TV's address).
-      setPairHost(saved.host);
-      console.info('[VegaTube] host saved, no token — auto-pairing with ElevSH');
-      startPair(saved.host);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // The menu is a startup convenience, not a lockout; it steps aside on its
-  // own so YouTube is one press (or zero) away.
-  useEffect(() => {
-    if (menu !== 'menu' || pairCode) {
-      return; // keep the code on screen until pairing finishes
-    }
-    menuTimerRef.current = setTimeout(() => setMenu('hidden'), 20000);
-    return () => {
-      if (menuTimerRef.current) {
-        clearTimeout(menuTimerRef.current);
-      }
-    };
-  }, [menu, pairCode]);
-
-  // While the FYAISA menu is open, Back closes it instead of talking to
-  // YouTube. Declared after the YouTube Back effect so it runs first (LIFO).
-  useEffect(() => {
-    if (menu === 'hidden') {
-      return;
-    }
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      setMenu('hidden');
-      return true;
-    });
-    return () => sub.remove();
-  }, [menu]);
 
   /**
    * Receive diagnostics from the injected prelude (window.ReactNativeWebView).
@@ -651,140 +504,6 @@ export const App = () => {
     (webRef.current as any)?.reload();
   }, []);
 
-  // --- ElevSH panel actions -------------------------------------------------
-
-  const dismissMenu = useCallback(() => setMenu('hidden'), []);
-
-  const accessRetryRef = useRef(0);
-
-  /**
-   * Validate a saved token against the bridge. 401 clears the pairing;
-   * ElevSH access codes (403) are surfaced in the status line and retried for
-   * a couple of minutes so an Allow in FYAISA lands without a restart.
-   */
-  const verifyPair = useCallback(async (sp: SavedPair) => {
-    if (!sp.token) {
-      return;
-    }
-    try {
-      await Fyaisa.from({host: sp.host, token: sp.token, appId: VEGATUBE_APP_ID}).catalog();
-      console.info(`[VegaTube] ElevSH bridge reachable at ${sp.host}`);
-      accessRetryRef.current = 0;
-      setHubStatus(prev => (prev && prev.startsWith('Allow') ? 'ElevSH connected' : prev));
-    } catch (e: any) {
-      if (e instanceof FyaisaError && e.status === 401) {
-        await clearPair();
-        setPair(null);
-        setPairHost('');
-        console.warn('[VegaTube] pairing expired — pair from the menu');
-        setHubStatus('ElevSH pairing expired — pair again from the menu');
-      } else if (e instanceof FyaisaError && e.code === 'access_denied') {
-        console.warn('[VegaTube] ElevSH access denied in FYAISA');
-        setHubStatus('ElevSH access denied for VegaTube — allow it in FYAISA');
-      } else if (e instanceof FyaisaError && e.code === 'access_required') {
-        console.info('[VegaTube] waiting for ElevSH access approval in FYAISA');
-        setHubStatus('Allow VegaTube in FYAISA → ElevSH');
-        if (accessRetryRef.current < 18) {
-          accessRetryRef.current += 1;
-          setTimeout(() => verifyPair(sp), 8000);
-        }
-      } else {
-        console.info('[VegaTube] ElevSH offline during restore check');
-        setHubStatus('ElevSH offline right now');
-      }
-    }
-  }, []);
-
-  /**
-   * Pair with the bridge. Called automatically with the remembered host, or
-   * from the keypad. The bridge auto-approves when FYAISA has allowed this app
-   * and the request comes from this TV; otherwise it shows up on FYAISA's
-   * ElevSH screen (or `fyaisa approve <code>` on the PC).
-   */
-  const startPair = useCallback(
-    async (hostArg?: string) => {
-      const host = (hostArg ?? pairHost).trim();
-      if (!host) {
-        setHubStatus('Enter your computer’s address first (shown by fyaisa connect)');
-        return;
-      }
-      try {
-        setHubStatus('Requesting ElevSH pairing…');
-        const {code, autoApproved} = await Fyaisa.requestCode(host, BRIDGE_PORT, VEGATUBE_APP_ID);
-        setPairCode(code);
-        await savePair({host}); // remember the host even before we have a token
-        setHubStatus(
-          autoApproved
-            ? 'ElevSH access already allowed — connecting…'
-            : `Allow VegaTube in FYAISA → ElevSH (code ${code})`,
-        );
-        const p = await Fyaisa.waitForApproval(host, code, BRIDGE_PORT, 2000, 600000, {
-          appId: VEGATUBE_APP_ID,
-        });
-        await savePair(p);
-        setPair(p);
-        setPairCode(null);
-        setHubStatus('ElevSH connected — updates install through it');
-        setMenu('menu');
-        console.info('[VegaTube] paired with ElevSH bridge');
-        verifyPair(p);
-      } catch (e: any) {
-        setPairCode(null);
-        setHubStatus(
-          e instanceof FyaisaError && e.code === 'access_denied'
-            ? 'ElevSH access denied for VegaTube — allow it in FYAISA'
-            : `Pairing failed: ${e?.message || e}`,
-        );
-      }
-    },
-    [pairHost, verifyPair],
-  );
-
-  const forget = useCallback(async () => {
-    await clearPair();
-    setPair(null);
-    setPairHost('');
-    setHubStatus('ElevSH pairing forgotten');
-  }, []);
-
-  /** Queue a rebuild + reinstall of VegaTube over ElevSH; stream the log. */
-  const updateViaPc = useCallback(async () => {
-    const token = pair?.token;
-    if (!pair || !token) {
-      return;
-    }
-    const accessMsg = (e: any) =>
-      e instanceof FyaisaError && e.code === 'access_required'
-        ? 'Allow VegaTube in FYAISA → ElevSH first'
-        : e instanceof FyaisaError && e.code === 'access_denied'
-          ? 'ElevSH access denied in FYAISA'
-          : null;
-    try {
-      const fy = Fyaisa.from({host: pair.host, token, appId: VEGATUBE_APP_ID});
-      const {jobId} = await fy.install(VEGATUBE_APP_ID);
-      setJob({status: 'queued', log: []});
-      console.info(`[VegaTube] update job queued: ${jobId}`);
-      const iv = setInterval(async () => {
-        try {
-          const j = await fy.job(jobId);
-          setJob({status: j.status, log: (j.log || []).slice(-8)});
-          if (j.status === 'done' || j.status === 'error') {
-            clearInterval(iv);
-            console.info(`[VegaTube] update job ${j.status}`);
-          }
-        } catch (e: any) {
-          clearInterval(iv);
-          setJob(prev => ({
-            status: 'error',
-            log: [...(prev?.log || []), accessMsg(e) || 'bridge unreachable'],
-          }));
-        }
-      }, 2500);
-    } catch (e: any) {
-      setJob({status: 'error', log: [accessMsg(e) || String(e?.message || e)]});
-    }
-  }, [pair]);
-
   return (
     <View style={styles.container}>
       <WebView
@@ -853,104 +572,6 @@ export const App = () => {
         </View>
       )}
 
-      {menu !== 'hidden' && (
-        <View style={styles.menuOverlay}>
-          <View style={styles.menuCard}>
-            <Text style={styles.menuTitle}>VegaTube v{APP_VERSION}</Text>
-            <Text style={styles.menuCredit}>A FYAISA example app</Text>
-            <Text style={styles.menuStatus}>{hubStatus}</Text>
-            {pair ? (
-              <Text style={styles.menuPaired}>Paired with {pair.host}</Text>
-            ) : null}
-
-            {menu === 'pair' ? (
-              <>
-                <Text style={styles.menuHint}>
-                  Enter your computer’s address, then Get pairing code. Approve in
-                  FYAISA → ElevSH, or on the PC: fyaisa approve &lt;code&gt;
-                </Text>
-                <View style={styles.keypad}>
-                  {HOST_KEYS.map(k => (
-                    <KeplerPressable
-                      key={k}
-                      style={focusRing}
-                      onPress={() =>
-                        setPairHost(h => (k === '⌫' ? h.slice(0, -1) : h + k))
-                      }>
-                      <View style={styles.key}>
-                        <Text style={styles.keyText}>{k}</Text>
-                      </View>
-                    </KeplerPressable>
-                  ))}
-                </View>
-                <Text style={styles.menuHost}>{pairHost || '…'}</Text>
-                {pairCode ? (
-                  <Text style={styles.menuCode}>Code: {pairCode}</Text>
-                ) : null}
-                <KeplerPressable hasTVPreferredFocus style={menuFocus} onPress={() => startPair()}>
-                  <View style={styles.menuBtn}>
-                    <Text style={styles.menuBtnText}>
-                      {pairCode ? 'Waiting for approval…' : 'Get pairing code'}
-                    </Text>
-                  </View>
-                </KeplerPressable>
-                <KeplerPressable style={menuFocus} onPress={() => setMenu('menu')}>
-                  <View style={styles.menuBtnGhost}>
-                    <Text style={styles.menuBtnText}>Back</Text>
-                  </View>
-                </KeplerPressable>
-              </>
-            ) : (
-              <>
-                {updateVersion ? (
-                  <KeplerPressable hasTVPreferredFocus style={menuFocus} onPress={updateViaPc}>
-                    <View style={styles.menuBtn}>
-                      <Text style={styles.menuBtnText}>
-                        Update to v{updateVersion} via ElevSH
-                      </Text>
-                    </View>
-                  </KeplerPressable>
-                ) : null}
-                <KeplerPressable
-                  hasTVPreferredFocus={!updateVersion}
-                  style={menuFocus}
-                  onPress={() => setMenu('pair')}>
-                  <View style={styles.menuBtnGhost}>
-                    <Text style={styles.menuBtnText}>
-                      {pair ? 'Change ElevSH host' : 'Pair with ElevSH'}
-                    </Text>
-                  </View>
-                </KeplerPressable>
-                {pair ? (
-                  <KeplerPressable style={menuFocus} onPress={forget}>
-                    <View style={styles.menuBtnGhost}>
-                      <Text style={styles.menuBtnText}>Forget ElevSH</Text>
-                    </View>
-                  </KeplerPressable>
-                ) : null}
-                <KeplerPressable style={menuFocus} onPress={dismissMenu}>
-                  <View style={styles.menuBtnGhost}>
-                    <Text style={styles.menuBtnText}>Continue to YouTube</Text>
-                  </View>
-                </KeplerPressable>
-                {job ? (
-                  <>
-                    <Text style={styles.menuJobStatus}>Update: {job.status}</Text>
-                    {job.log.map((l, i) => (
-                      <Text key={i} style={styles.menuJobLine} numberOfLines={2}>
-                        {l}
-                      </Text>
-                    ))}
-                  </>
-                ) : null}
-              </>
-            )}
-            <Text style={styles.menuFooter}>
-              Powered by FYAISA — ElevSH runs via “fyaisa connect” on your computer
-            </Text>
-          </View>
-        </View>
-      )}
     </View>
   );
 };
@@ -1005,59 +626,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
   },
 
-  // --- FYAISA startup menu -------------------------------------------------
-  menuOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(6,6,10,0.94)',
-    padding: 56,
-    justifyContent: 'center',
-  },
-  menuCard: {maxWidth: 940},
-  menuTitle: {color: '#ffffff', fontSize: 40, fontWeight: '700'},
-  menuCredit: {color: '#8b8b99', fontSize: 16, marginTop: 4},
-  menuStatus: {color: '#7ee787', fontSize: 17, marginTop: 14},
-  menuPaired: {color: '#9fd0ff', fontSize: 15, marginTop: 4},
-  menuHint: {color: '#a9a9b8', fontSize: 15, marginTop: 12, lineHeight: 21},
-  menuHost: {color: '#ffffff', fontSize: 26, fontFamily: 'monospace', marginTop: 10},
-  menuCode: {color: '#ffb02e', fontSize: 24, fontWeight: '700', marginTop: 8},
-  keypad: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12, maxWidth: 456},
-  key: {
-    width: 64,
-    height: 54,
-    margin: 4,
-    borderRadius: 8,
-    backgroundColor: '#23232d',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  keyText: {color: '#ffffff', fontSize: 22},
-  menuBtn: {
-    backgroundColor: '#1c7d32',
-    borderRadius: 6,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    alignSelf: 'flex-start',
-  },
-  menuBtnGhost: {
-    backgroundColor: '#1e1e28',
-    borderRadius: 6,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    alignSelf: 'flex-start',
-  },
-  menuBtnWrap: {marginTop: 16},
-  menuBtnText: {color: '#ffffff', fontSize: 18},
-  menuFooter: {color: '#5c5c6b', fontSize: 13, marginTop: 24},
-  menuJobStatus: {color: '#7ee787', fontSize: 15, marginTop: 14},
-  menuJobLine: {
-    color: '#8b8b99',
-    fontSize: 12,
-    fontFamily: 'monospace',
-    marginTop: 2,
-  },
   /** Transparent base border so the focus ring never shifts layout.
    *  alignSelf keeps the pressable (and thus the ring) tight around the
-   *  inner button instead of stretching to the full menu panel width. */
+   *  inner button. */
   focusBase: {
     alignSelf: 'flex-start',
     borderWidth: 3,

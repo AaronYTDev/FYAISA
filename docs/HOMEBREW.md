@@ -176,7 +176,7 @@ ElevSH also handles consent for the other homebrew apps:
 
 1. An app using the vendored client sends `X-FYAISA-App: <app-id>` when it
    requests a pairing code. The bridge records it as *pending*.
-2. **FYAISA → ElevSH** shows it live: "app.vegatube.main wants to pair". One
+2. **FYAISA → ElevSH** shows it live: "app.fyaisa.files.main wants to pair". One
    **Allow** tap on the TV approves the pairing *and* marks the app allowed;
    **Deny** blocks it. No PC keyboard needed.
 3. Once allowed, every future pairing by that app on this TV is
@@ -256,12 +256,12 @@ run the Vega CLI on the PC on your app's behalf. Pair once (§5), then:
 ```ts
 import {Fyaisa} from './fyaisaClient'; // vendored copy, see below
 
-const fy = Fyaisa.from({host: '192.168.12.102', token, appId: 'app.vegatube.main'});
+const fy = Fyaisa.from({host: '192.168.12.102', token, appId: 'app.fyaisa.files.main'});
 
 const cli  = await fy.vega(['--version']);              // "Vega CLI Version: 1.4.4"
 const devs = await fy.vega(['device', 'list']);         // connected Fire TVs
-await fy.vega(['device', 'launch-app',  '--appName', 'app.vegatube.main']);
-await fy.vega(['device', 'terminate-app', '--appName', 'app.vegatube.main']);
+await fy.vega(['device', 'launch-app',  '--appName', 'app.fyaisa.files.main']);
+await fy.vega(['device', 'terminate-app', '--appName', 'app.fyaisa.files.main']);
 await fy.vega(['exec', 'vda', 'connect', '192.168.12.197:5555']);
 await fy.vega(['device', 'run-cmd', '--command', 'ls /data']); // shell on the stick
 ```
