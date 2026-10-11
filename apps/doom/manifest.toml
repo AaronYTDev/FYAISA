@@ -2,7 +2,7 @@ schema-version = 1
 
 [package]
 title = "DOOM"
-version = "1.0.0"
+version = "1.1.0"
 id = "app.doom"
 icon = "@image/doom.png"
 
