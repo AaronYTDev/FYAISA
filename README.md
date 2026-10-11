@@ -3,7 +3,7 @@
 The one-stop homebrew shop for Vega OS devices.
 
 With a CLI for installing, and an on-device app.
-Designed by **aaronYTDev**.
+Designed by **aaronYTDev**. Oh, and **Madrinth**.
 
 ---
 
