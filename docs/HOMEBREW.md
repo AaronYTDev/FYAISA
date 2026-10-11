@@ -109,9 +109,17 @@ The name must match `^@image/([^\s/]+)$` and the file must exist at
 missing). Without an `icon` field the system default tile is used and the
 pack warns `Icon is not defined in the manifest`. A square 512x512 PNG
 works; the launcher crops to a rounded tile, so keep key art away from the
-corners. The hub's app list shows the same artwork offline: copies live
-under `installer/assets/image/` with the catalog ids mapped in
-`APP_ICONS` in `installer/src/App.tsx`.
+corners.
+
+The hub shows that same artwork, and reads it straight from your app
+directory: it loads `<app-dir>/assets/image/<app-dir>.png`, the name
+`fyaisa add-app` scaffolds. So a new app appears with its tile without any
+change to the hub. Name the file after the directory; if your tile uses a
+different name, give your catalog entry an `icon` URL (a
+`raw.githubusercontent.com` link works). The apps that ship with FYAISA
+also keep a copy under `installer/assets/image/`, mapped in `APP_ICONS` in
+`installer/src/App.tsx`, so the list still has art when the network is
+down — a bundled copy is preferred over the one fetched from the repo.
 
 Incremental builds do not reliably re-stage the manifest or `assets/`:
 after changing either, delete `build/` and `buildinfo.json` before

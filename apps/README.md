@@ -22,6 +22,7 @@ apps/<app-dir>/
 ├── tsconfig.json
 ├── src/                   # application source (React Native for Vega)
 │   └── App.tsx
+├── assets/image/          # artwork; <app-dir>.png is the launcher tile
 ├── scripts/               # optional build helpers
 └── README.md
 ```
@@ -50,6 +51,11 @@ apps/<app-dir>/
 9. Add a credits section at the top of your app's README, listing yourself
    and the upstream project it derives from. This section is the part
    contributors are expected to edit.
+10. Name your launcher tile `assets/image/<app-dir>.png` and declare it in
+    the manifest (`icon = "@image/<app-dir>.png"`). The hub loads exactly
+    that path from the repo, so a new app shows its icon in the list with
+    no change to the hub. If your tile is named differently, add an `icon`
+    URL to your catalog entry instead.
 
 ## Adding your app
 

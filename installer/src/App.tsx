@@ -50,6 +50,12 @@ type HubApp = {
   license?: string;
   author?: string;
   homepage?: string;
+  /** Repo-relative app directory, e.g. "apps/snake" (the hub itself: "installer"). */
+  path?: string;
+  /** Optional explicit row-icon URL; otherwise it's derived from `path`. */
+  icon?: string;
+  /** Version a fresh install would give; compared against the installed one. */
+  version?: string;
   minOsVersion?: string;
   architectures?: string[];
   tags?: string[];
@@ -276,6 +282,14 @@ export const App = () => {
   // runs `vega device installed-apps` on the PC). Empty until the first poll,
   // so everything looks "not installed" for a moment on a cold start.
   const [installed, setInstalled] = useState<Set<string>>(new Set());
+  // Installed version per catalog id, read over ElevSH (`vpm info <id>
+  // --package`). The catalog's own `version` is what a fresh install would
+  // give, so comparing the two is how a row knows it's already current. A
+  // missing entry means "unknown" (bridge offline, or not on the device yet),
+  // which we treat as "an update might exist".
+  const [versions, setVersions] = useState<Record<string, string>>({});
+  /** Bumped to force a version re-read (after installs and on a slow timer). */
+  const [versionsTick, setVersionsTick] = useState(0);
   /** Update-all progress; null while no update-all run is going on. */
   const [updateAll, setUpdateAll] = useState<{done: number; total: number; current: string} | null>(null);
   // Power tools (ElevSH → poke at the device): the last action's output, the
@@ -325,6 +339,24 @@ export const App = () => {
         (a.tags ?? []).some(t => t.toLowerCase().includes(q)),
     );
   }, [apps, query]);
+
+  /**
+   * What a row should offer: install it (not on the device), update it (on the
+   * device but a different version than the catalog publishes), or nothing at
+   * all — it's already current. When the installed version can't be read we
+   * assume an update may exist, so buttons never point users at nothing.
+   */
+  const appState = useCallback(
+    (a: HubApp): 'install' | 'update' | 'current' => {
+      if (!installed.has(a.id)) {
+        return 'install';
+      }
+      const v = versions[a.id];
+      return v !== undefined && v === a.version ? 'current' : 'update';
+    },
+    [installed, versions],
+  );
+  const updatable = useMemo(() => apps.filter(a => appState(a) === 'update'), [apps, appState]);
 
   // Restore a previous pairing on launch; React state alone is lost on every
   // app restart.
@@ -472,6 +504,76 @@ export const App = () => {
     return () => clearInterval(iv);
   }, [pair.status, refreshInstalled]);
 
+  /**
+   * Read the installed version of each installed catalog app, over the bridge
+   * (`vega device run-cmd --command 'vpm info <id> --package'`, a command that
+   * prints `version: x.y.z` for a package). Batched three at a time, leaving
+   * one of the bridge's four slots for the installed-apps poll; a failed read
+   * just leaves that app's version unknown.
+   */
+  const refreshVersions = useCallback(
+    async (ids: string[]) => {
+      if (pair.status !== 'paired' || !ids.length) {
+        return;
+      }
+      const found: Record<string, string> = {};
+      for (let i = 0; i < ids.length; i += 3) {
+        const batch = ids.slice(i, i + 3);
+        const got = await Promise.all(
+          batch.map(async (id): Promise<[string, string | null]> => {
+            try {
+              const r = await bridgeFetch('/vega', {
+                method: 'POST',
+                body: JSON.stringify({
+                  args: ['device', 'run-cmd', '--command', `vpm info ${id} --package`],
+                  timeoutMs: 30000,
+                }),
+              });
+              const m = /^\s*version:\s*(\S+)/m.exec(`${r.stdout || ''}\n${r.stderr || ''}`);
+              return [id, m ? m[1] : null];
+            } catch {
+              return [id, null];
+            }
+          }),
+        );
+        for (const [id, v] of got) {
+          if (v) {
+            found[id] = v;
+          }
+        }
+      }
+      setVersions(prev => {
+        const next = {...prev};
+        for (const id of ids) {
+          delete next[id]; // a version we couldn't read is "unknown", not old
+        }
+        return {...next, ...found};
+      });
+    },
+    [pair.status, bridgeFetch],
+  );
+
+  // Catalog apps currently on the device, as one stable key: whenever that set
+  // (or the catalog) changes, re-read the versions behind it.
+  const installedKey = useMemo(
+    () => apps.filter(a => installed.has(a.id)).map(a => a.id).join(','),
+    [apps, installed],
+  );
+  useEffect(() => {
+    if (pair.status !== 'paired' || !installedKey) {
+      setVersions({});
+      return;
+    }
+    refreshVersions(installedKey.split(','));
+    // versionsTick is a deliberate trigger: it re-reads after an install, and a
+    // slow timer catches updates made outside the hub.
+  }, [installedKey, versionsTick, pair.status, refreshVersions]);
+
+  useEffect(() => {
+    const iv = setInterval(() => setVersionsTick(t => t + 1), 5 * 60 * 1000);
+    return () => clearInterval(iv);
+  }, []);
+
   /** Ask the bridge for a code, then poll until the user approves it on the PC. */
   const startPairing = useCallback(async () => {
     if (!base) {
@@ -560,6 +662,7 @@ export const App = () => {
               clearInterval(iv);
               if (job.status === 'done') {
                 refreshInstalled();
+                setVersionsTick(t => t + 1);
               }
             }
           } catch (e: any) {
@@ -587,15 +690,14 @@ export const App = () => {
       }));
       return;
     }
-    const installedApps = apps.filter(a => installed.has(a.id));
-    if (updateAll || !installedApps.length) {
+    if (updateAll || !updatable.length) {
       return;
     }
-    setUpdateAll({done: 0, total: installedApps.length, current: ''});
+    setUpdateAll({done: 0, total: updatable.length, current: ''});
     try {
-      for (let i = 0; i < installedApps.length; i++) {
-        const a = installedApps[i];
-        setUpdateAll({done: i, total: installedApps.length, current: a.name});
+      for (let i = 0; i < updatable.length; i++) {
+        const a = updatable[i];
+        setUpdateAll({done: i, total: updatable.length, current: a.name});
         const {jobId} = await bridgeFetch('/install', {
           method: 'POST',
           body: JSON.stringify({appId: a.id}),
@@ -622,14 +724,15 @@ export const App = () => {
           }
         }
       }
-      setUpdateAll({done: installedApps.length, total: installedApps.length, current: ''});
+      setUpdateAll({done: updatable.length, total: updatable.length, current: ''});
     } catch (e: any) {
       setPair(p => ({...p, status: 'error', message: e.message}));
     } finally {
       setTimeout(() => setUpdateAll(null), 4000);
       refreshInstalled();
+      setVersionsTick(t => t + 1);
     }
-  }, [pair.status, apps, installed, bridgeFetch, refreshInstalled, updateAll]);
+  }, [pair.status, updatable, bridgeFetch, refreshInstalled, updateAll]);
 
   /** Allow / deny / revoke an app's ElevSH access from the TV. */
   const decideAccess = useCallback(
@@ -818,39 +921,55 @@ export const App = () => {
   // is also re-run by the manual Refresh button and must not touch it again.
   const splashHiddenRef = useRef(false);
 
-  const loadCatalog = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(CATALOG_URL, {signal: controller.signal});
-      clearTimeout(timer);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+  const loadCatalog = useCallback(
+    async (quiet = false) => {
+      // A quiet pass is the background one: no spinner, and a failed fetch
+      // keeps whatever we're showing instead of dropping to the built-in list.
+      if (!quiet) {
+        setLoading(true);
+        setError(null);
       }
-      const data = (await res.json()) as Catalog;
-      if (!data || !Array.isArray(data.apps)) {
-        throw new Error('malformed catalog');
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        const res = await fetch(CATALOG_URL, {signal: controller.signal});
+        clearTimeout(timer);
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = (await res.json()) as Catalog;
+        if (!data || !Array.isArray(data.apps)) {
+          throw new Error('malformed catalog');
+        }
+        setCatalog(data);
+        setError(null);
+        console.info(`[FYAISA] catalog loaded: ${data.apps.length} app(s)`);
+      } catch (e: any) {
+        const msg = (e && e.message) || String(e);
+        console.error(`[FYAISA] catalog fetch failed: ${msg}`);
+        if (!quiet) {
+          setError(msg);
+          setCatalog(FALLBACK_CATALOG);
+        }
+      } finally {
+        if (!quiet) {
+          setLoading(false);
+        }
+        if (!splashHiddenRef.current) {
+          splashHiddenRef.current = true;
+          hideSplashScreenCallback();
+        }
       }
-      setCatalog(data);
-      console.info(`[FYAISA] catalog loaded: ${data.apps.length} app(s)`);
-    } catch (e: any) {
-      const msg = (e && e.message) || String(e);
-      console.error(`[FYAISA] catalog fetch failed: ${msg}`);
-      setError(msg);
-      setCatalog(FALLBACK_CATALOG);
-    } finally {
-      setLoading(false);
-      if (!splashHiddenRef.current) {
-        splashHiddenRef.current = true;
-        hideSplashScreenCallback();
-      }
-    }
-  }, [hideSplashScreenCallback]);
+    },
+    [hideSplashScreenCallback],
+  );
 
   useEffect(() => {
     loadCatalog();
+    // Re-read the catalog on its own so apps added to (or removed from) the
+    // repo show up here without a hub update or a manual Refresh.
+    const iv = setInterval(() => loadCatalog(true), 5 * 60 * 1000);
+    return () => clearInterval(iv);
   }, [loadCatalog]);
 
   // Remote navigation is handled natively: Pressable rows take D-pad focus
@@ -1341,6 +1460,7 @@ export const App = () => {
     return (
       <View style={styles.detailWrap}>
         <ScrollView contentContainerStyle={styles.detail}>
+          <AppIcon app={selected} style={styles.detailIcon} />
           <Text style={styles.detailTitle}>{selected.name}</Text>
           <Text style={styles.detailId}>{selected.id}</Text>
           {selected.summary ? (
@@ -1371,6 +1491,14 @@ export const App = () => {
           {selected.author ? (
             <Text style={styles.meta}>Author: {selected.author}</Text>
           ) : null}
+          {selected.version ? (
+            <Text style={styles.meta}>
+              Version: {selected.version}
+              {installed.has(selected.id) && versions[selected.id]
+                ? ` (installed ${versions[selected.id]})`
+                : ''}
+            </Text>
+          ) : null}
           {selected.updated ? <Text style={styles.meta}>Updated: {selected.updated}</Text> : null}
 
           {selected.notes?.length ? (
@@ -1395,14 +1523,20 @@ export const App = () => {
                 <Text style={styles.howtoBody}>
                   …or install from right here over ElevSH ({pair.host}):
                 </Text>
-                <Pressable
-                  hasTVPreferredFocus
-                  style={focusable(styles.installBtn)}
-                  onPress={() => requestInstall(selected.id)}>
-                  <Text style={styles.backText}>
-                    {installed.has(selected.id) ? 'Update' : 'Install'} via ElevSH ({pair.host})
+                {appState(selected) === 'current' ? (
+                  <Text style={styles.upToDate}>
+                    Installed and up to date — nothing to update.
                   </Text>
-                </Pressable>
+                ) : (
+                  <Pressable
+                    hasTVPreferredFocus
+                    style={focusable(styles.installBtn)}
+                    onPress={() => requestInstall(selected.id)}>
+                    <Text style={styles.backText}>
+                      {appState(selected) === 'update' ? 'Update' : 'Install'} via ElevSH ({pair.host})
+                    </Text>
+                  </Pressable>
+                )}
                 {pair.job ? (
                   <View style={styles.job}>
                     <Text style={styles.jobStatus}>
@@ -1508,16 +1642,21 @@ export const App = () => {
             {query ? `"${query}"` : 'Search apps'}
           </Text>
         </Pressable>
-        {/* Update all: rebuilds and reinstalls every catalog app through the
-            same bridge jobs the per-row buttons queue, one at a time. */}
-        <Pressable
-          focusable
-          style={({focused}) => [styles.updateAllBtn, focused && styles.focused]}
-          onPress={runUpdateAll}>
-          <Text style={styles.refreshText}>
-            {updateAll ? `Updating ${updateAll.done}/${updateAll.total}…` : 'Update all'}
-          </Text>
-        </Pressable>
+        {/* Update all: only shows when something actually needs it, and only
+            rebuilds those apps — the same bridge jobs the per-row buttons
+            queue, one at a time. */}
+        {updatable.length > 0 || updateAll ? (
+          <Pressable
+            focusable
+            style={({focused}) => [styles.updateAllBtn, focused && styles.focused]}
+            onPress={runUpdateAll}>
+            <Text style={styles.refreshText}>
+              {updateAll
+                ? `Updating ${updateAll.done}/${updateAll.total}…`
+                : `Update all (${updatable.length})`}
+            </Text>
+          </Pressable>
+        ) : null}
         {/* Refresh: re-runs the exact fetch the app does on launch (the live
             catalog from the repo, same source `fyaisa` prints on the PC),
             falling back to the built-in list if GitHub is unreachable. */}
@@ -1574,51 +1713,93 @@ export const App = () => {
             </View>
           ) : null}
 
-          {filteredApps.map((a, i) => (
-            <View key={a.id} style={styles.rowCard}>
-              <Pressable
-                hasTVPreferredFocus={i === 0}
-                focusable
-                style={({focused}) => [styles.rowBody, focused && styles.rowFocused, focused && styles.focused]}
-                onPress={() => setSelectedId(a.id)}>
-                {APP_ICONS[a.id] ? (
-                  <Image style={styles.rowIcon} source={APP_ICONS[a.id]} />
-                ) : null}
-                <View style={styles.rowMain}>
-                  <Text style={styles.rowTitle}>{a.name}</Text>
-                  <Text style={styles.rowId}>{a.id}</Text>
-                  {a.summary ? (
-                    <Text style={styles.rowSummary} numberOfLines={2}>
-                      {a.summary}
-                    </Text>
-                  ) : null}
-                </View>
-                <View style={[styles.dot, {backgroundColor: statusColor(a.status)}]} />
-              </Pressable>
-              {/* Sibling of the row body, not a child: a nested focusable
-                  inside the row Pressable confuses D-pad focus. */}
-              <Pressable
-                focusable
-                style={({focused}) => [styles.rowActionBtn, focused && styles.focused]}
-                onPress={() => {
-                  if (pair.status !== 'paired') {
-                    setPair(p => ({
-                      ...p,
-                      status: 'error',
-                      message: 'Not paired with ElevSH — set it up in FYAISA → ElevSH first',
-                    }));
-                    return;
-                  }
-                  requestInstall(a.id);
-                }}>
-                <Text style={styles.rowActionText}>{installed.has(a.id) ? 'Update' : 'Install'}</Text>
-              </Pressable>
-            </View>
-          ))}
+          {filteredApps.map((a, i) => {
+            const state = appState(a);
+            return (
+              <View key={a.id} style={styles.rowCard}>
+                <Pressable
+                  hasTVPreferredFocus={i === 0}
+                  focusable
+                  style={({focused}) => [styles.rowBody, focused && styles.rowFocused, focused && styles.focused]}
+                  onPress={() => setSelectedId(a.id)}>
+                  <AppIcon app={a} style={styles.rowIcon} />
+                  <View style={styles.rowMain}>
+                    <Text style={styles.rowTitle}>{a.name}</Text>
+                    <Text style={styles.rowId}>{a.id}</Text>
+                    {a.summary ? (
+                      <Text style={styles.rowSummary} numberOfLines={2}>
+                        {a.summary}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={[styles.dot, {backgroundColor: statusColor(a.status)}]} />
+                </Pressable>
+                {/* Sibling of the row body, not a child: a nested focusable
+                    inside the row Pressable confuses D-pad focus. A current
+                    app gets a plain label, not a button — there's nothing to
+                    update, so it shouldn't take a D-pad step. */}
+                {state === 'current' ? (
+                  <View style={[styles.rowActionBtn, styles.rowActionCurrent]}>
+                    <Text style={[styles.rowActionText, styles.rowActionMutedText]}>Up to date</Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    focusable
+                    style={({focused}) => [styles.rowActionBtn, focused && styles.focused]}
+                    onPress={() => {
+                      if (pair.status !== 'paired') {
+                        setPair(p => ({
+                          ...p,
+                          status: 'error',
+                          message: 'Not paired with ElevSH — set it up in FYAISA → ElevSH first',
+                        }));
+                        return;
+                      }
+                      requestInstall(a.id);
+                    }}>
+                    <Text style={styles.rowActionText}>{state === 'update' ? 'Update' : 'Install'}</Text>
+                  </Pressable>
+                )}
+              </View>
+            );
+          })}
         </ScrollView>
       )}
     </View>
   );
+};
+
+/**
+ * Where an app's row art lives, derived from its catalog `path` the same way
+ * the scaffolder and the docs lay it out: `<path>/assets/image/<dir>.png`
+ * (apps/snake → apps/snake/assets/image/snake.png). A catalog `icon` URL, if
+ * present, overrides that. Either way, adding an app to the repo needs nothing
+ * from the hub: no bundled file, no APP_ICONS entry, no hub update.
+ */
+const RAW_BASE = 'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main';
+const remoteIcon = (app: HubApp): {uri: string} | null => {
+  if (app.icon) {
+    return {uri: app.icon};
+  }
+  const p = (app.path ?? '').replace(/\/+$/, '');
+  const dir = p.split('/').pop();
+  return p && dir ? {uri: `${RAW_BASE}/${p}/assets/image/${dir}.png`} : null;
+};
+
+/**
+ * An app's icon in the list and detail views. A bundled copy wins when we ship
+ * one (instant, and it still shows with no network); otherwise the app's own
+ * art is loaded from the repo, which is what lets a brand-new app show its tile
+ * with no hub rebuild. A remote miss renders nothing rather than a broken box.
+ */
+const AppIcon = ({app, style}: {app: HubApp; style: any}) => {
+  const [failed, setFailed] = useState(false);
+  const remote = remoteIcon(app);
+  const source = APP_ICONS[app.id] ?? (!failed ? remote : null);
+  if (!source) {
+    return null;
+  }
+  return <Image style={style} source={source} onError={() => setFailed(true)} />;
 };
 
 const Badge = ({label, color}: {label: string; color: string}) => (
@@ -1689,6 +1870,7 @@ const styles = StyleSheet.create({
   },
   rowBody: {flex: 1, flexDirection: 'row', alignItems: 'center'},
   rowIcon: {width: 76, height: 76, borderRadius: 14, marginRight: 18},
+  detailIcon: {width: 96, height: 96, borderRadius: 18, marginBottom: 14},
   rowMain: {flex: 1, paddingRight: 16},
   rowTitle: {color: '#fff', fontSize: 22, fontWeight: '600'},
   rowId: {color: '#6f6f80', fontSize: 13, marginTop: 2},
@@ -1703,6 +1885,8 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   rowActionText: {color: '#fff', fontSize: 16, fontWeight: '600'},
+  rowActionCurrent: {backgroundColor: '#23232d'},
+  rowActionMutedText: {color: '#8b8b99'},
   dot: {width: 12, height: 12, borderRadius: 6},
   chevron: {color: '#6f6f80', fontSize: 30, fontWeight: '600'},
   detailWrap: {flex: 1, backgroundColor: '#0b0b0f'},
@@ -1738,6 +1922,7 @@ const styles = StyleSheet.create({
     marginVertical: 12,
     fontFamily: 'monospace',
   },
+  upToDate: {color: '#4caf50', fontSize: 16, marginTop: 16},
   backBtn: {
     marginTop: 28,
     alignSelf: 'flex-start',
