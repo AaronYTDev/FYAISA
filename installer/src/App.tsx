@@ -369,11 +369,6 @@ const Hub = () => {
   const [statusKnown, setStatusKnown] = useState(false);
   /** Update-all progress; null while no update-all run is going on. */
   const [updateAll, setUpdateAll] = useState<{done: number; total: number; current: string} | null>(null);
-  // Detail-view app actions (Open / Uninstall over ElevSH): the in-flight
-  // label, the last result, and which app's Uninstall is armed for a 2nd tap.
-  const [appBusy, setAppBusy] = useState<string | null>(null);
-  const [appNote, setAppNote] = useState<{text: string; ok: boolean} | null>(null);
-  const [uninstallArm, setUninstallArm] = useState<string | null>(null);
   // Power tools (ElevSH → poke at the device): the last action's output, the
   // installed/running app lists those screens render, and the terminal's
   // command + result. All of it flows over the same paired bridge.
@@ -925,70 +920,6 @@ const Hub = () => {
     }
   }, [pair.status, updatable, bridgeFetch, refreshInstalled, updateAll]);
 
-  /** Open an installed app on the Fire TV over ElevSH. */
-  const openApp = useCallback(
-    async (appId: string) => {
-      if (pair.status !== 'paired') return;
-      setAppBusy(`Opening ${appId}…`);
-      setAppNote(null);
-      try {
-        const r = await bridgeFetch('/launch', {
-          method: 'POST',
-          body: JSON.stringify({appId}),
-        });
-        setAppNote({
-          text: r.ok ? `Opened ${appId} on the Fire TV.` : `Could not open ${appId}.`,
-          ok: !!r.ok,
-        });
-      } catch (e: any) {
-        setAppNote({text: e?.message || String(e), ok: false});
-      } finally {
-        setAppBusy(null);
-      }
-    },
-    [pair.status, bridgeFetch],
-  );
-
-  /**
-   * Uninstall an installed app over ElevSH. Two taps: the first arms it and
-   * explains, the second sends the request. The bridge stops a running app
-   * before removing it, so the uninstall doesn't bounce.
-   */
-  const uninstallApp = useCallback(
-    async (appId: string) => {
-      if (pair.status !== 'paired') return;
-      if (uninstallArm !== appId) {
-        setUninstallArm(appId);
-        setAppNote({text: `Tap Uninstall again to remove ${appId} from the Fire TV.`, ok: true});
-        return;
-      }
-      setUninstallArm(null);
-      setAppBusy(`Removing ${appId}…`);
-      setAppNote(null);
-      try {
-        const r = await bridgeFetch('/uninstall', {
-          method: 'POST',
-          body: JSON.stringify({appId}),
-        });
-        setAppNote({
-          text: r.ok ? `Removed ${appId}.` : `Could not remove ${appId}.`,
-          ok: !!r.ok,
-        });
-        if (r.ok) {
-          // Re-read status so the badge and the Install button flip back.
-          setStatusKnown(false);
-          refreshInstalled();
-          setVersionsTick(t => t + 1);
-        }
-      } catch (e: any) {
-        setAppNote({text: e?.message || String(e), ok: false});
-      } finally {
-        setAppBusy(null);
-      }
-    },
-    [pair.status, uninstallArm, bridgeFetch, refreshInstalled],
-  );
-
   /** Allow / deny / revoke an app's ElevSH access from the TV. */
   const decideAccess = useCallback(
     async (appId: string, decision: 'allow' | 'deny' | 'revoke') => {
@@ -1275,13 +1206,6 @@ const Hub = () => {
     else if (selectedId === '__debloat__') loadDebloat(true);
     else if (selectedId === '__terminal__') setCmdOut(null);
   }, [selectedId, loadSystemApps, loadRunningApps, loadDebloat]);
-
-  // Fresh screen: drop any Open/Uninstall result and armed state so a new app
-  // never inherits the last one's "tap again" or note.
-  useEffect(() => {
-    setUninstallArm(null);
-    setAppNote(null);
-  }, [selectedId]);
 
   // The splash screen is dismissed exactly once: the intro drops it as soon as
   // it has painted, and loadCatalog keeps the same guard as a backstop in case
@@ -2205,43 +2129,7 @@ const Hub = () => {
                     ))}
                   </View>
                 ) : null}
-
-                {/* Already on the stick: run it, or take it off again. The hub
-                    itself is left alone — removing the app you're holding would
-                    just kill this screen mid-press. */}
-                {installed.has(selected.id) && selected.id !== HUB_APP_ID ? (
-                  <View style={styles.detailActions}>
-                    <Pressable
-                      focusable
-                      disabled={!!appBusy}
-                      style={focusable(styles.detailOpenBtn)}
-                      onPress={() => openApp(selected.id)}>
-                      <Text style={styles.backText}>Open on Fire TV</Text>
-                    </Pressable>
-                    <Pressable
-                      focusable
-                      disabled={!!appBusy}
-                      style={focusable([
-                        styles.detailRemoveBtn,
-                        uninstallArm === selected.id && styles.detailRemoveArmed,
-                      ])}
-                      onPress={() => uninstallApp(selected.id)}>
-                      <Text
-                        style={[
-                          styles.forgetText,
-                          uninstallArm === selected.id && styles.detailRemoveArmedText,
-                        ]}>
-                        {uninstallArm === selected.id ? 'Tap again to uninstall' : 'Uninstall'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                ) : null}
-                {appBusy ? <Text style={styles.pcInfo}>{appBusy}</Text> : null}
-                {appNote ? (
-                  <Text style={appNote.ok ? styles.pcInfo : styles.toolDanger}>
-                    {appNote.text}
-                  </Text>
-                ) : null}
+                
               </>
             ) : (
               <>
@@ -2713,28 +2601,6 @@ const makeStyles = (t: ResolvedTheme) => {
     fontFamily: 'monospace',
   },
   upToDate: {color: t.success, fontSize: 16, marginTop: 16},
-  // Detail-view app actions: Open (green) next to Uninstall (soft red, and
-  // solid red once armed for the second tap).
-  detailActions: {flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: 4},
-  detailOpenBtn: {
-    backgroundColor: t.success,
-    ...buttonBase,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-    borderRadius: 6,
-    marginRight: 12,
-    marginTop: 12,
-  },
-  detailRemoveBtn: {
-    backgroundColor: t.dangerSoft,
-    ...buttonBase,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-    borderRadius: 6,
-    marginTop: 12,
-  },
-  detailRemoveArmed: {backgroundColor: t.danger},
-  detailRemoveArmedText: {color: '#ffffff'},
   backBtn: {
     marginTop: 28,
     alignSelf: 'flex-start',

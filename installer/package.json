@@ -1,6 +1,6 @@
 {
   "name": "@fyaisa/fyaisa-app",
-  "version": "1.9.3",
+  "version": "1.9.2",
   "private": true,
   "files": [
     "dist"

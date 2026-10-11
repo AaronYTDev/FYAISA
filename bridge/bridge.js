@@ -756,8 +756,6 @@ const server = http.createServer(async (req, res) => {
       await run('vega', ['exec', 'vda', 'connect', `${ip}:5555`], HOST_DIR, () => {});
     }
     const out = [];
-    // Stop the app first: uninstall-app can bounce on a running app.
-    await run('vega', ['device', 'terminate-app', '--appName', appId], HOST_DIR, () => {});
     const rc = await run('vega', ['device', 'uninstall-app', '--appName', appId], HOST_DIR, (l) =>
       out.push(l),
     );
