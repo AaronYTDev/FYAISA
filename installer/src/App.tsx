@@ -191,6 +191,33 @@ const SEARCH_KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-. '.split('');
 /** Query length cap — long enough for any app name, short enough to fix typos. */
 const SEARCH_MAX = 32;
 
+/**
+ * The Power-tools terminal keyboard. These are exactly the characters the
+ * bridge's /vega allowlist accepts — no quotes, pipes or globs — so anything
+ * you can type here is something ElevSH will actually run. Lowercase only,
+ * because commands are case-sensitive and `ls` is what you'll want to type.
+ */
+const CMD_KEYS = [
+  ...'abcdefghijklmnopqrstuvwxyz',
+  ...'0123456789',
+  ' ', '.', '/', '_', '-', ':', '=', ',', '@', '+',
+];
+const CMD_MAX = 80;
+/** One-tap starting points for the terminal. */
+const CMD_PRESETS = ['ls /data', 'ls -la /data', 'ls /'];
+
+/** Render a /vega result as the text the output panels show. */
+const vegaText = (r: any): string => {
+  const out = [r?.stdout, r?.stderr]
+    .filter((s: any) => typeof s === 'string' && s.trim())
+    .join('\n')
+    .trim();
+  return out || `(no output — exit ${r?.exitCode ?? '?'})`;
+};
+
+/** Power-tools screens that hang off the ElevSH screen (Back returns there). */
+const TOOL_SCREENS = new Set(['__systemapps__', '__runningapps__', '__terminal__']);
+
 const statusColor = (s?: string) =>
   s === 'stable' ? '#4caf50' : s === 'beta' ? '#ffb300' : '#9e9e9e';
 
@@ -251,6 +278,19 @@ export const App = () => {
   const [installed, setInstalled] = useState<Set<string>>(new Set());
   /** Update-all progress; null while no update-all run is going on. */
   const [updateAll, setUpdateAll] = useState<{done: number; total: number; current: string} | null>(null);
+  // Power tools (ElevSH → poke at the device): the last action's output, the
+  // installed/running app lists those screens render, and the terminal's
+  // command + result. All of it flows over the same paired bridge.
+  const [toolBusy, setToolBusy] = useState<string | null>(null);
+  const [toolOut, setToolOut] = useState<{title: string; text: string; ok: boolean} | null>(null);
+  const [sysApps, setSysApps] = useState<string[] | null>(null);
+  const [sysRunning, setSysRunning] = useState<Set<string>>(new Set());
+  const [runningApps, setRunningApps] = useState<string[] | null>(null);
+  /** Reboot is one tap to arm, a second to fire (D-pad slips happen). */
+  const [rebootArmed, setRebootArmed] = useState(false);
+  const [cmdText, setCmdText] = useState(CMD_PRESETS[0]);
+  const [cmdOut, setCmdOut] = useState<string | null>(null);
+  const [cmdBusy, setCmdBusy] = useState(false);
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
@@ -623,6 +663,157 @@ export const App = () => {
     [bridgeFetch],
   );
 
+  // ---- Power tools: run allowlisted `vega` commands over ElevSH -------------
+
+  /** Run one allowlisted `vega` command through the bridge. */
+  const runVega = useCallback(
+    (args: string[], timeoutMs: number = 30000) =>
+      bridgeFetch('/vega', {method: 'POST', body: JSON.stringify({args, timeoutMs})}),
+    [bridgeFetch],
+  );
+
+  /** Device info: dump the JSON the CLI prints into the output panel. */
+  const showDeviceInfo = useCallback(async () => {
+    setToolBusy('Reading device info…');
+    try {
+      const r = await runVega(['device', 'info']);
+      setToolOut({title: 'Device info', text: vegaText(r), ok: !!r.ok});
+    } catch (e: any) {
+      setToolOut({title: 'Device info', text: e?.message || String(e), ok: false});
+    } finally {
+      setToolBusy(null);
+    }
+  }, [runVega]);
+
+  /** Reboot: arm on the first tap, fire on the second. */
+  const rebootDevice = useCallback(async () => {
+    if (!rebootArmed) {
+      setRebootArmed(true);
+      setToolOut({
+        title: 'Reboot',
+        text: 'Tap “Reboot Fire TV” once more to confirm. The stick drops off for a minute or so.',
+        ok: true,
+      });
+      return;
+    }
+    setRebootArmed(false);
+    setToolBusy('Rebooting…');
+    try {
+      const r = await runVega(['device', 'reboot'], 20000);
+      setToolOut({title: 'Reboot', text: vegaText(r), ok: !!r.ok});
+    } catch (e: any) {
+      // A reboot usually kills the link before `vega` can answer; that's a win.
+      setToolOut({
+        title: 'Reboot',
+        text: `Sent. The Fire TV is restarting (${e?.message || e}).`,
+        ok: true,
+      });
+    } finally {
+      setToolBusy(null);
+    }
+  }, [rebootArmed, runVega]);
+
+  /** List every installed app, plus which of them are running right now. */
+  const loadSystemApps = useCallback(async () => {
+    setSysApps(null);
+    setSysRunning(new Set());
+    setToolBusy('Reading installed apps…');
+    try {
+      const [inst, run] = await Promise.all([
+        runVega(['device', 'installed-apps']),
+        runVega(['device', 'running-apps']).catch(() => null),
+      ]);
+      const ids = (s: string) =>
+        String(s || '')
+          .split('\n')
+          .map(l => l.trim())
+          .filter(Boolean)
+          .sort();
+      setSysApps(ids(inst.stdout));
+      if (run) setSysRunning(new Set(ids(run.stdout)));
+    } catch (e: any) {
+      setSysApps([]);
+      setToolOut({title: 'Installed apps', text: e?.message || String(e), ok: false});
+    } finally {
+      setToolBusy(null);
+    }
+  }, [runVega]);
+
+  const launchApp = useCallback(
+    async (appId: string) => {
+      setToolBusy(`Opening ${appId}…`);
+      try {
+        const r = await runVega(['device', 'launch-app', '--appName', appId]);
+        setToolOut({title: `Open ${appId}`, text: vegaText(r), ok: !!r.ok});
+        if (r.ok) setSysRunning(prev => new Set(prev).add(appId));
+      } catch (e: any) {
+        setToolOut({title: `Open ${appId}`, text: e?.message || String(e), ok: false});
+      } finally {
+        setToolBusy(null);
+      }
+    },
+    [runVega],
+  );
+
+  const loadRunningApps = useCallback(async () => {
+    setRunningApps(null);
+    setToolBusy('Reading running apps…');
+    try {
+      const r = await runVega(['device', 'running-apps']);
+      setRunningApps(
+        String(r.stdout || '')
+          .split('\n')
+          .map((l: string) => l.trim())
+          .filter(Boolean)
+          .sort(),
+      );
+    } catch (e: any) {
+      setRunningApps([]);
+      setToolOut({title: 'Running apps', text: e?.message || String(e), ok: false});
+    } finally {
+      setToolBusy(null);
+    }
+  }, [runVega]);
+
+  const terminateApp = useCallback(
+    async (appId: string) => {
+      setToolBusy(`Stopping ${appId}…`);
+      try {
+        const r = await runVega(['device', 'terminate-app', '--appName', appId]);
+        setToolOut({title: `Stop ${appId}`, text: vegaText(r), ok: !!r.ok});
+        if (r.ok) setRunningApps(prev => (prev ? prev.filter(a => a !== appId) : prev));
+      } catch (e: any) {
+        setToolOut({title: `Stop ${appId}`, text: e?.message || String(e), ok: false});
+      } finally {
+        setToolBusy(null);
+      }
+    },
+    [runVega],
+  );
+
+  /** Terminal: one `vega device run-cmd` with the typed command. */
+  const runTerminal = useCallback(async () => {
+    const cmd = cmdText.trim();
+    if (!cmd) return;
+    setCmdBusy(true);
+    setCmdOut(null);
+    try {
+      const r = await runVega(['device', 'run-cmd', '--command', cmd]);
+      setCmdOut(vegaText(r));
+    } catch (e: any) {
+      setCmdOut(e?.message || String(e));
+    } finally {
+      setCmdBusy(false);
+    }
+  }, [cmdText, runVega]);
+
+  // Load a Power-tools list when its screen opens (each fetch is over ElevSH).
+  useEffect(() => {
+    if (selectedId === '__systemapps__') loadSystemApps();
+    else if (selectedId === '__runningapps__') loadRunningApps();
+    else if (selectedId === '__terminal__') setCmdOut(null);
+  }, [selectedId, loadSystemApps, loadRunningApps]);
+
   // The splash screen is dismissed exactly once, by the first fetch; loadCatalog
   // is also re-run by the manual Refresh button and must not touch it again.
   const splashHiddenRef = useRef(false);
@@ -674,7 +865,9 @@ export const App = () => {
         return true;
       }
       if (selectedId === null) return false; // main menu → let the OS close us
-      if (selectedId.startsWith('__')) {
+      if (TOOL_SCREENS.has(selectedId)) {
+        setSelectedId('__connect__'); // a Power-tools screen → back to ElevSH
+      } else if (selectedId.startsWith('__')) {
         setSelectedId(null); // any submenu → main menu
       } else {
         setSelectedId('__apps__'); // app detail → the Apps list
@@ -883,7 +1076,259 @@ export const App = () => {
             </View>
           ) : null}
 
+          {pair.status === 'paired' ? (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Power tools</Text>
+              <Text style={styles.howtoBody}>
+                Poke at the Fire TV over ElevSH: open hidden and system apps, see
+                what's running, run a command on the stick, or reboot it. These
+                ride the same paired link as installs.
+              </Text>
+
+              <ToolRow
+                title="Open any app"
+                summary={`Everything installed${
+                  sysApps ? ` (${sysApps.length})` : ''
+                } — system and hidden apps included`}
+                action="Open"
+                onPress={() => setSelectedId('__systemapps__')}
+              />
+              <ToolRow
+                title="Running apps"
+                summary="See what's live right now, and stop an app"
+                action="Open"
+                onPress={() => setSelectedId('__runningapps__')}
+              />
+              <ToolRow
+                title="Run a command"
+                summary="A tiny terminal — `vega device run-cmd` on the stick"
+                action="Open"
+                onPress={() => setSelectedId('__terminal__')}
+              />
+              <ToolRow
+                title="Device info"
+                summary="Model, OS build, hostname, developer mode"
+                action="Run"
+                onPress={showDeviceInfo}
+              />
+              <ToolRow
+                title={rebootArmed ? 'Reboot Fire TV — tap again to confirm' : 'Reboot Fire TV'}
+                summary="Restart the stick; it drops off for a minute or so"
+                action="Reboot"
+                danger
+                onPress={rebootDevice}
+              />
+
+              {toolBusy ? <Text style={styles.pcInfo}>{toolBusy}</Text> : null}
+              {toolOut ? (
+                <View style={styles.toolOut}>
+                  <Text style={styles.toolOutTitle}>
+                    {toolOut.title}
+                    {toolOut.ok ? '' : ' — failed'}
+                  </Text>
+                  <Text style={styles.toolOutText} numberOfLines={12}>
+                    {toolOut.text}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+
           <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
+            <Text style={styles.backText}>Back</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Power tools → "Open any app": every installed component, system and
+  // hidden ones included (that's the whole point — the launcher hides them).
+  if (selectedId === '__systemapps__') {
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <Text style={styles.brand}>Open any app</Text>
+          <Text style={styles.tagline}>
+            Everything installed on this Fire TV, straight from ElevSH. Most of
+            these are background services and will refuse to start — the ones
+            that open are the hidden apps.
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={styles.list}>
+          {toolBusy ? <Text style={styles.pcInfo}>{toolBusy}</Text> : null}
+          {sysApps == null ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color="#fff" />
+            </View>
+          ) : sysApps.length === 0 ? (
+            <Text style={styles.dim}>Nothing to show.</Text>
+          ) : (
+            sysApps.map((id, i) => (
+              <Pressable
+                key={id}
+                hasTVPreferredFocus={i === 0}
+                focusable
+                style={({focused}) => [
+                  styles.toolRow,
+                  focused && styles.rowFocused,
+                  focused && styles.focused,
+                ]}
+                onPress={() => launchApp(id)}>
+                <View style={styles.toolMain}>
+                  <Text style={styles.toolTitle}>{id}</Text>
+                  <Text style={styles.toolSummary}>
+                    {APP_ICONS[id] ? 'FYAISA app' : 'system / hidden'}
+                    {sysRunning.has(id) ? ' · running' : ''}
+                  </Text>
+                </View>
+                <Text style={styles.toolOpen}>Open ›</Text>
+              </Pressable>
+            ))
+          )}
+          {toolOut ? (
+            <View style={styles.toolOut}>
+              <Text style={styles.toolOutTitle}>
+                {toolOut.title}
+                {toolOut.ok ? '' : ' — failed'}
+              </Text>
+              <Text style={styles.toolOutText} numberOfLines={8}>
+                {toolOut.text}
+              </Text>
+            </View>
+          ) : null}
+          <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
+            <Text style={styles.backText}>Back</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Power tools → "Running apps": what's live, with tap-to-stop.
+  if (selectedId === '__runningapps__') {
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <Text style={styles.brand}>Running apps</Text>
+          <Text style={styles.tagline}>Live on the stick right now. Select one to stop it.</Text>
+        </View>
+        <ScrollView contentContainerStyle={styles.list}>
+          {toolBusy ? <Text style={styles.pcInfo}>{toolBusy}</Text> : null}
+          {runningApps == null ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color="#fff" />
+            </View>
+          ) : runningApps.length === 0 ? (
+            <Text style={styles.dim}>Nothing is running.</Text>
+          ) : (
+            runningApps.map((id, i) => (
+              <Pressable
+                key={id}
+                hasTVPreferredFocus={i === 0}
+                focusable
+                style={({focused}) => [
+                  styles.toolRow,
+                  focused && styles.rowFocused,
+                  focused && styles.focused,
+                ]}
+                onPress={() => terminateApp(id)}>
+                <View style={styles.toolMain}>
+                  <Text style={styles.toolTitle}>{id}</Text>
+                </View>
+                <Text style={styles.toolOpen}>Stop</Text>
+              </Pressable>
+            ))
+          )}
+          {toolOut ? (
+            <View style={styles.toolOut}>
+              <Text style={styles.toolOutTitle}>
+                {toolOut.title}
+                {toolOut.ok ? '' : ' — failed'}
+              </Text>
+              <Text style={styles.toolOutText} numberOfLines={6}>
+                {toolOut.text}
+              </Text>
+            </View>
+          ) : null}
+          <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
+            <Text style={styles.backText}>Back</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Power tools → "Run a command": D-pad terminal for `vega device run-cmd`.
+  if (selectedId === '__terminal__') {
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <Text style={styles.brand}>Run a command</Text>
+          <Text style={styles.tagline}>
+            Runs as `vega device run-cmd` over ElevSH. Letters, digits and the
+            punctuation on the keypad only — no quotes, pipes or globs.
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={styles.list}>
+          <Text style={styles.code}>{cmdText || ' '}</Text>
+
+          <View style={styles.keypad}>
+            {CMD_PRESETS.map(p => (
+              <Pressable
+                key={p}
+                focusable
+                style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused, focused && styles.focused]}
+                onPress={() => setCmdText(p)}>
+                <Text style={styles.ctrlKeyText}>{p}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={styles.keypad}>
+            {CMD_KEYS.map((k, i) => (
+              <Pressable
+                key={`${k}-${i}`}
+                hasTVPreferredFocus={i === 0}
+                focusable
+                style={({focused}) => [styles.key, focused && styles.keyFocused]}
+                onPress={() => setCmdText(c => (c.length >= CMD_MAX ? c : c + k))}>
+                <Text style={styles.keyText}>{k === ' ' ? '␣' : k}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={styles.keypad}>
+            <Pressable
+              focusable
+              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              onPress={() => setCmdText(c => c.slice(0, -1))}>
+              <Text style={styles.ctrlKeyText}>⌫ Delete</Text>
+            </Pressable>
+            <Pressable
+              focusable
+              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              onPress={() => setCmdText('')}>
+              <Text style={styles.ctrlKeyText}>Clear</Text>
+            </Pressable>
+            <Pressable
+              focusable
+              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused, focused && styles.focused]}
+              onPress={runTerminal}>
+              <Text style={styles.ctrlKeyText}>{cmdBusy ? 'Running…' : '▶ Run'}</Text>
+            </Pressable>
+          </View>
+
+          {cmdOut != null ? (
+            <View style={styles.toolOut}>
+              <Text style={styles.toolOutTitle}>{cmdText}</Text>
+              <Text style={styles.toolOutText} numberOfLines={16}>
+                {cmdOut}
+              </Text>
+            </View>
+          ) : null}
+
+          <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
             <Text style={styles.backText}>Back</Text>
           </Pressable>
         </ScrollView>
@@ -1182,6 +1627,36 @@ const Badge = ({label, color}: {label: string; color: string}) => (
   </View>
 );
 
+/**
+ * One action in the ElevSH Power-tools card: a title, a one-line explanation
+ * and a right-hand verb ("Open"/"Run"/"Reboot"). Focus ring comes from the
+ * shared `focused` style, like every other control here.
+ */
+const ToolRow = ({
+  title,
+  summary,
+  action,
+  danger,
+  onPress,
+}: {
+  title: string;
+  summary: string;
+  action: string;
+  danger?: boolean;
+  onPress: () => void;
+}) => (
+  <Pressable
+    focusable
+    style={({focused}) => [styles.toolRow, focused && styles.rowFocused, focused && styles.focused]}
+    onPress={onPress}>
+    <View style={styles.toolMain}>
+      <Text style={[styles.toolTitle, danger && styles.toolDanger]}>{title}</Text>
+      <Text style={styles.toolSummary}>{summary}</Text>
+    </View>
+    <Text style={styles.toolOpen}>{action}</Text>
+  </Pressable>
+);
+
 const styles = StyleSheet.create({
   wrap: {flex: 1, backgroundColor: '#0b0b0f'},
   header: {paddingHorizontal: 40, paddingTop: 36, paddingBottom: 18},
@@ -1408,6 +1883,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   ctrlKeyText: {color: '#fff', fontSize: 20},
+  // Power tools: action rows, the output panel, and the red danger label.
+  toolRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a23',
+    borderRadius: 8,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginTop: 10,
+  },
+  toolMain: {flex: 1, paddingRight: 12},
+  toolTitle: {color: '#fff', fontSize: 18, fontWeight: '600'},
+  toolSummary: {color: '#8b8b99', fontSize: 14, marginTop: 2},
+  toolDanger: {color: '#e57373'},
+  toolOpen: {color: '#8fb8d8', fontSize: 15, fontWeight: '600'},
+  toolOut: {
+    marginTop: 14,
+    backgroundColor: '#101018',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2a2a38',
+    padding: 14,
+  },
+  toolOutTitle: {color: '#7ee787', fontSize: 14, fontWeight: '600', marginBottom: 8},
+  toolOutText: {color: '#c9c9d6', fontSize: 13, fontFamily: 'monospace', lineHeight: 19},
   /**
    * The TV focus ring: a thick amber border plus a glow, appended by every
    * focusable when focused (without it the selected control is hard to see on

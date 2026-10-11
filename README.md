@@ -107,6 +107,26 @@ Any app's detail screen then shows **Install via ElevSH**, which queues a real
 build + `vega device install-app` on your machine and streams the build log
 back to the TV.
 
+### Power tools
+
+Once you're paired, the **ElevSH** screen gains a **Power tools** panel — a
+sandbox for poking at the stick with the same paired link:
+
+- **Open any app**: every component installed on the Fire TV, system and hidden
+  ones included. Tap one to `launch-app` it (most are background services and
+  will refuse to start; the ones that open are the hidden apps the launcher
+  doesn't show).
+- **Running apps**: what's live right now, with tap-to-stop
+  (`terminate-app`).
+- **Run a command**: a D-pad terminal for `vega device run-cmd`. It only offers
+  the characters the bridge's allowlist accepts — no quotes, pipes or globs.
+- **Device info**: the JSON `vega device info` prints.
+- **Reboot Fire TV**: restarts the stick (two taps: it asks once to confirm,
+  because remote slips happen and the TV drops off for a minute).
+
+Everything here goes through the bridge's allowlisted `POST /vega`, so it is
+exactly the set of `vega device …` commands any paired app can already run.
+
 ### How it works
 
 ```
@@ -167,7 +187,7 @@ Releases page; the catalog's `install` block describes how to get one.
 | `fyaisa` CLI | list / search / info / install / update / uninstall / devices / connect / approve |
 | `fyaisa connect` bridge (ElevSH) | pairing (PC or FYAISA approval), token auth, per-app allow/deny, installs, `POST /vega`, `fyaisa disconnect` |
 | Catalog | `catalog.json` schema v1, served from this repo |
-| FYAISA app | works on a Fire TV Stick HD: live catalog with search, persistent pairing, Install via ElevSH, ElevSH allow/deny screen |
+| FYAISA app | works on a Fire TV Stick HD: live catalog with search, persistent pairing, Install via ElevSH, ElevSH allow/deny screen, and a Power tools panel (open hidden apps, running apps, command runner, reboot) |
 | Apps | the hub itself (`app.fyaisa.hub.main`), plus `app.vegatube.main` (VegaTube), `app.fyaisa.files.main` (ElevSH Files, the file explorer), `app.snake.main` (Google Snake, streams from Google), `app.doom.main` (DOOM shareware, offline) and `app.smb.main` (Super Mario Bros, NES emulator) |
 
 ## Not affiliated with Amazon or Google

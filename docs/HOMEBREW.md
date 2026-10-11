@@ -181,6 +181,28 @@ changed any time from the FYAISA ElevSH screen. Until an app is allowed, its
 token-authenticated requests fail with `403` and `code: 'access_required'`;
 after a Deny, `code: 'access_denied'`.
 
+### Power tools (the ElevSH sandbox on the TV)
+
+The hub's **ElevSH** screen also has a **Power tools** panel for driving the
+device directly, all through the same allowlisted `POST /vega` that any paired
+app can use:
+
+- **Open any app** lists `vega device installed-apps` and calls `launch-app` on
+  what you pick. The list includes the system and hidden components the launcher
+  never shows; only some are launchable (the rest are services and refuse).
+- **Running apps** lists `vega device running-apps` and calls `terminate-app`.
+- **Run a command** is a D-pad terminal over `vega device run-cmd`. The keypad
+  only offers the characters the bridge's arg whitelist accepts
+  (`A-Za-z0-9 ._/:=,@+-`), so a command that types here is one that runs — no
+  quotes, pipes or globs.
+- **Device info** prints the `vega device info` JSON.
+- **Reboot Fire TV** sends `vega device reboot`; it asks for a second tap first,
+  since the stick drops off the link for a minute.
+
+This is a convenience wrapper, not a new capability: it only exposes `vega
+device …` commands, behind the same token + app gate as everything else on the
+bridge.
+
 ### Patch installs (`POST /install` with `patch: true`)
 
 A catalog entry can declare that it's a patched build of another app:
