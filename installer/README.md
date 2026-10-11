@@ -11,6 +11,21 @@ The catalog browser that runs on the Fire TV. Part of the
   minimum OS version, notes, and the exact install command
 - Falls back to a small built-in list if GitHub is unreachable
 
+## Themes
+
+The hub ships with 8 ready-made theme presets (Classic, Midnight, Nord,
+Synthwave, Forest, Sunset, Ocean, Daylight) and full per-setting customisation
+from *Themes* on the main menu:
+
+- **Colours** — accent, background and panel colours as swatch grids
+- **Button style** — Flat, Glow, or Outline focus treatment
+- **Background effect** — Off, Aurora, Waves, or a sweeping light bar
+- **Motion** — Calm / Normal / Party speed for animated backgrounds
+
+Your choice is saved to `/data/theme.json` on the stick and survives restarts.
+App logos and tile art are never recoloured — only the hub's own colours,
+buttons and background change.
+
 ## What it cannot do
 
 Vega OS exposes no package-install API to third-party apps; package
