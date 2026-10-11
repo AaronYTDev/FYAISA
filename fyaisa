@@ -54,10 +54,13 @@ NODE_BIN="$HOME/.local/nodejs/node-v22.23.3-linux-x64/bin"
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; CYN=$'\033[36m'; DIM=$'\033[2m'; RST=$'\033[0m'
 
-info() { printf '%s==>%s %s\n' "$CYN" "$RST" "$1"; }
-warn() { printf '%s[warn]%s %s\n' "$YEL" "$RST" "$1"; }
-ok()   { printf '%s[ok]%s %s\n' "$GRN" "$RST" "$1"; }
-die()  { printf '%s[error]%s %s\n' "$RED" "$RST" "$1"; exit 1; }
+# Status goes to stderr. Some callers capture a helper's stdout to get a
+# value back (app_src_dir prints a path), so progress lines must not land in
+# the captured result.
+info() { printf '%s==>%s %s\n' "$CYN" "$RST" "$1" >&2; }
+warn() { printf '%s[warn]%s %s\n' "$YEL" "$RST" "$1" >&2; }
+ok()   { printf '%s[ok]%s %s\n' "$GRN" "$RST" "$1" >&2; }
+die()  { printf '%s[error]%s %s\n' "$RED" "$RST" "$1" >&2; exit 1; }
 
 # --- dependencies ------------------------------------------------------------
 need() { command -v "$1" >/dev/null 2>&1 || die "'$1' not found. $2"; }
@@ -229,7 +232,9 @@ fetch_app_source() {
 _download_app_source() {
   local rel="$1" cache_dir="$2" tarball_url="$3"
   local tmp; tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+  # The RETURN trap is not scoped to this function: leave it set and it fires
+  # again on the caller's return, where tmp is gone and set -u blows up.
+  trap 'rm -rf "$tmp"; trap - RETURN' RETURN
 
   info "Downloading $rel from GitHub…"
   curl -fsSL "$tarball_url" -o "$tmp/repo.tar.gz" || return 1
@@ -272,7 +277,7 @@ app_src_dir() {
 }
 
 build_app() {
-  local id="$1" dir; dir="$(app_src_dir "$id")"
+  local id="$1" dir="$2"
   info "Building $id from $dir"
   (
     cd "$dir" || exit 1
@@ -312,13 +317,16 @@ cmd_install() {
   local id="$1"
   cmd_info "$id" >/dev/null
   require_device
-  build_app "$id"
+  # Resolve the source folder exactly once, before building. app_src_dir can
+  # re-download the app, and a re-download wipes the build output, so calling
+  # it again after build_app would delete buildinfo.json out from under vega.
   local dir; dir="$(app_src_dir "$id")"
+  build_app "$id" "$dir"
   info "Installing $id on the device"
   if [[ -n "$DEVICE_IP" ]]; then
-    (cd "$dir" && vega device install-app --dir . -b "$BUILD_TYPE" --device "$DEVICE_IP")
+    (cd "$dir" && vega device install-app --dir . -b "$BUILD_TYPE" --device "$DEVICE_IP") || die "Install failed for $id"
   else
-    (cd "$dir" && vega device install-app --dir . -b "$BUILD_TYPE")
+    (cd "$dir" && vega device install-app --dir . -b "$BUILD_TYPE") || die "Install failed for $id"
   fi
   ok "Installed $id"
 }
