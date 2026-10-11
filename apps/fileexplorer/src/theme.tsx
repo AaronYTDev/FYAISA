@@ -326,7 +326,7 @@ export const SURFACE_SWATCHES = [
 ];
 
 export const FOCUS_SWATCHES = [
-  '#ffb02e', '#ffd54f', '#ffb74d', '#ff8f00', '#e50914', '#6ea8ff',
+  '#ffb02e', '#ffb74d', '#ff8f00', '#e50914', '#7c4dff', '#6ea8ff',
   '#88c0d0', '#00e5ff', '#4dd0e1', '#a5d6a7', '#ffffff', '#0b0b0f',
 ];
 
