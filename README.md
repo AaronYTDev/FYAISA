@@ -29,7 +29,7 @@ FYAISA/
 │   └── README.md             # bridge API + security model
 ├── docs/
 │   └── HOMEBREW.md           # developer guide: Vega CLI, pairing, platform gotchas
-├── icons/                    # launcher icon art (SVG sources; each app ships its PNG)
+├── icons/                    # launcher icon art (SVG/PNG sources; each app ships its PNG)
 ├── installer/                # the FYAISA app (on-device catalog browser)
 └── scripts/
     └── install-hub.sh        # build + install the hub app itself
