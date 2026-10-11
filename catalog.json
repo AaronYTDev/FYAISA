@@ -35,7 +35,7 @@
       "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.9.0",
+      "version": "1.9.1",
       "updated": "2026-10-11",
       "install": {
         "kind": "vpkg-release",
@@ -198,7 +198,7 @@
       "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.2.3",
+      "version": "1.2.4",
       "updated": "2026-10-11",
       "install": {
         "kind": "vpkg-release",

@@ -180,10 +180,10 @@ const humanSize = (n: number | null): string => {
 };
 
 // Home LANs are almost always 192.168.x.y, so the address box opens with that
-// much already typed and you only punch in the last octets. Backspace stops
-// before the prefix, so a stray press can't wipe it.
+// much already typed and you only punch in the last octets. It's ordinary text
+// once there — backspace through it for a different subnet.
 const HOST_PREFIX = '192.168.';
-/** True once the address holds all four octets (i.e. something past the prefix). */
+/** True once the address holds all four octets. */
 const hostFilled = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h.trim());
 
 // D-pad-friendly keypad for typing a dotted IPv4 address.
@@ -500,7 +500,7 @@ const FilesApp = () => {
                   ]}
                   onPress={() => {
                     if (k === '⌫') {
-                      setHost(h => (h === HOST_PREFIX ? h : h.slice(0, -1)));
+                      setHost(h => h.slice(0, -1));
                     } else {
                       setHost(h => h + k);
                     }

@@ -203,10 +203,10 @@ const FALLBACK_CATALOG: Catalog = {
 };
 
 // Home LANs are almost always 192.168.x.y, so the address box opens with that
-// much already typed and you only punch in the last octets. Backspace stops
-// before the prefix, so a stray press can't wipe it.
+// much already typed and you only punch in the last octets. It's ordinary text
+// once there — backspace clears it if your LAN lives somewhere else.
 const HOST_PREFIX = '192.168.';
-/** True once the address holds all four octets (i.e. something past the prefix). */
+/** True once the box holds a full dotted address. */
 const hostFilled = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h.trim());
 
 // D-pad-friendly keypad for typing a dotted IPv4 address.
@@ -1312,7 +1312,7 @@ const Hub = () => {
             <Text style={styles.code}>
               {hostFilled(pair.host || '')
                 ? `http://${pair.host}:${BRIDGE_PORT}`
-                : pair.host || HOST_PREFIX}
+                : pair.host || 'not set'}
             </Text>
 
             <View style={styles.keypad}>
@@ -1322,11 +1322,7 @@ const Hub = () => {
                   style={({focused}) => [styles.key, focused && styles.keyFocused, focused && styles.focused]}
                   onPress={() => {
                     if (k === '⌫') {
-                      setPair(p => {
-                        const cur = p.host ?? HOST_PREFIX;
-                        if (cur === HOST_PREFIX) return p; // the 192.168. stays
-                        return {...p, host: cur.slice(0, -1)};
-                      });
+                      setPair(p => ({...p, host: (p.host || '').slice(0, -1)}));
                     } else {
                       setPair(p => ({...p, host: (p.host || '') + k}));
                     }

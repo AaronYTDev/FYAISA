@@ -2,7 +2,7 @@ schema-version = 1
 
 [package]
 title = "FYAISA"
-version = "1.9.0"
+version = "1.9.1"
 id = "app.fyaisa.hub"
 icon = "@image/fyaisa.png"
 
