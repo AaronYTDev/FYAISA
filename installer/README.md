@@ -17,7 +17,7 @@ The hub ships with 8 ready-made theme presets (Classic, Midnight, Nord,
 Synthwave, Forest, Sunset, Ocean, Daylight) and full per-setting customisation
 from *Themes* on the main menu:
 
-- **Colours** — accent, background and panel colours as swatch grids
+- **Colours** — accent, background, panel and focus-ring colours as swatch grids
 - **Button style** — Flat, Glow, or Outline focus treatment
 - **Background effect** — Off, Aurora, Waves, or a sweeping light bar
 - **Motion** — Calm / Normal / Party speed for animated backgrounds

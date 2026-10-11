@@ -325,6 +325,11 @@ export const SURFACE_SWATCHES = [
   '#0e2028', '#232337', '#2a2440', '#12263a', '#ffffff', '#f0ede6',
 ];
 
+export const FOCUS_SWATCHES = [
+  '#ffb02e', '#ffd54f', '#ffb74d', '#ff8f00', '#e50914', '#6ea8ff',
+  '#88c0d0', '#00e5ff', '#4dd0e1', '#a5d6a7', '#ffffff', '#0b0b0f',
+];
+
 export const BUTTON_EFFECTS: {id: ButtonEffect; label: string}[] = [
   {id: 'flat', label: 'Flat'},
   {id: 'glow', label: 'Glow'},

@@ -26,6 +26,7 @@ import {
   BG_SWATCHES,
   BUTTON_EFFECTS,
   ENERGIES,
+  FOCUS_SWATCHES,
   PRESET_LIST,
   ResolvedTheme,
   SURFACE_SWATCHES,
@@ -1546,6 +1547,14 @@ const Hub = () => {
             colors={SURFACE_SWATCHES}
             value={theme.palette.surface}
             onPick={c => patch({palette: {surface: c}})}
+          />
+
+          <Text style={styles.sectionTitle}>Ring color</Text>
+          <Text style={styles.sectionHint}>Focus ring around the selected control.</Text>
+          <SwatchGrid
+            colors={FOCUS_SWATCHES}
+            value={theme.palette.focus}
+            onPick={c => patch({palette: {focus: c}})}
           />
 
           <Text style={styles.sectionTitle}>Button style</Text>
