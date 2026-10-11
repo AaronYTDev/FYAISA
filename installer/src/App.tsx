@@ -239,7 +239,44 @@ const vegaText = (r: any): string => {
 };
 
 /** Power-tools screens that hang off the ElevSH screen (Back returns there). */
-const TOOL_SCREENS = new Set(['__systemapps__', '__runningapps__', '__terminal__']);
+const TOOL_SCREENS = new Set([
+  '__systemapps__',
+  '__runningapps__',
+  '__terminal__',
+  '__debloat__',
+]);
+
+/**
+ * The built-in de-bloat preset. Everything here ships on a stock Vega OS Fire
+ * TV and is safe to drop: the streaming apps are reinstallable from the
+ * Appstore, and the rest are Amazon's ad, recommendation and telemetry
+ * services. Ids are as `vega device installed-apps` lists them — removing one
+ * takes its whole package with it.
+ */
+const DEBLOAT_PRESET: {id: string; name: string}[] = [
+  // Preinstalled streaming apps — reinstallable from the Appstore.
+  {id: 'com.netflix.kepler.main', name: 'Netflix'},
+  {id: 'com.disney.disneyplus.main', name: 'Disney+'},
+  {id: 'com.cbs.ott.main', name: 'CBS / Paramount+'},
+  {id: 'com.skill.spotify.main', name: 'Spotify'},
+  {id: 'com.amazon.music.kepler.main', name: 'Amazon Music'},
+  // Amazon ad, recommendation and telemetry services.
+  {id: 'com.amazon.recommendation.service.main', name: 'Recommendations'},
+  {id: 'com.amazon.admanager.service.main', name: 'Ad manager'},
+  {id: 'com.amazon.adep.analyzer', name: 'Ad platform (adep)'},
+  {id: 'com.amazon.minerva', name: 'Minerva telemetry'},
+  {id: 'com.amazon.mediametrics.service', name: 'Media metrics'},
+];
+const DEBLOAT_PRESET_MAP = new Map(DEBLOAT_PRESET.map(e => [e.id, e.name]));
+
+/** Packages the de-bloater never offers: removing them breaks the stick. */
+const DEBLOAT_KEEP = new Set([
+  'app.fyaisa.hub.main', // the app you're holding
+  'com.amazon.smplighthouse.launcher.main', // the Fire TV home screen
+  'com.amazon.vegatvsettings.main', // Settings
+  'com.amazon.dev.shell.service', // starts every app
+  'com.amazon.vegaoobe.main', // out-of-box setup
+]);
 
 const statusColor = (s?: string) =>
   s === 'stable' ? '#4caf50' : s === 'beta' ? '#ffb300' : '#9e9e9e';
@@ -338,6 +375,12 @@ const Hub = () => {
   const [cmdText, setCmdText] = useState(CMD_PRESETS[0]);
   const [cmdOut, setCmdOut] = useState<string | null>(null);
   const [cmdBusy, setCmdBusy] = useState(false);
+  // De-bloat: which installed apps are ticked, whether the full list or just
+  // the preset is on screen, and whether Remove is armed for a second tap.
+  const [debloatSel, setDebloatSel] = useState<Set<string>>(new Set());
+  const [debloatShowAll, setDebloatShowAll] = useState(false);
+  const [debloatArmed, setDebloatArmed] = useState(false);
+  const [debloatBusy, setDebloatBusy] = useState(false);
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
@@ -978,12 +1021,116 @@ const Hub = () => {
     }
   }, [cmdText, runVega]);
 
+  /**
+   * De-bloat: read the installed list, and (on first open) tick everything the
+   * preset covers so the screen opens with a sensible, editable selection.
+   */
+  const loadDebloat = useCallback(
+    async (selectPreset = false) => {
+      setSysApps(null);
+      setToolBusy('Reading installed apps…');
+      try {
+        const r = await runVega(['device', 'installed-apps']);
+        const ids = String(r.stdout || '')
+          .split('\n')
+          .map((l: string) => l.trim())
+          .filter(Boolean)
+          .sort();
+        setSysApps(ids);
+        if (selectPreset) {
+          const present = new Set(ids);
+          setDebloatSel(
+            new Set(DEBLOAT_PRESET.filter(p => present.has(p.id)).map(p => p.id)),
+          );
+        }
+      } catch (e: any) {
+        setSysApps([]);
+        setToolOut({title: 'Installed apps', text: e?.message || String(e), ok: false});
+      } finally {
+        setToolBusy(null);
+      }
+    },
+    [runVega],
+  );
+
+  const toggleDebloat = useCallback((id: string) => {
+    setDebloatArmed(false);
+    setDebloatSel(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const applyDebloatPreset = useCallback(() => {
+    setDebloatArmed(false);
+    const present = new Set(sysApps ?? []);
+    setDebloatSel(new Set(DEBLOAT_PRESET.filter(p => present.has(p.id)).map(p => p.id)));
+  }, [sysApps]);
+
+  const clearDebloat = useCallback(() => {
+    setDebloatArmed(false);
+    setDebloatSel(new Set());
+  }, []);
+
+  /** Remove every ticked app, one bridge /uninstall at a time. Two taps to fire. */
+  const removeDebloatSelected = useCallback(async () => {
+    if (debloatBusy) return;
+    const ids = [...debloatSel];
+    if (!ids.length) return;
+    if (!debloatArmed) {
+      setDebloatArmed(true);
+      setToolOut({
+        title: 'De-bloat',
+        text:
+          `Tap “Remove” again to uninstall ${ids.length} ` +
+          `app${ids.length === 1 ? '' : 's'}. The stick keeps working, and ` +
+          `anything here can be reinstalled from the Appstore.`,
+        ok: true,
+      });
+      return;
+    }
+    setDebloatArmed(false);
+    setDebloatBusy(true);
+    const removed: string[] = [];
+    const failed: string[] = [];
+    for (const id of ids) {
+      setToolBusy(`Removing ${DEBLOAT_PRESET_MAP.get(id) || id}…`);
+      try {
+        const r = await bridgeFetch('/uninstall', {
+          method: 'POST',
+          body: JSON.stringify({appId: id}),
+        });
+        (r.ok ? removed : failed).push(id);
+      } catch {
+        failed.push(id);
+      }
+    }
+    setToolBusy(null);
+    setDebloatBusy(false);
+    setToolOut({
+      title: 'De-bloat',
+      text:
+        `Removed ${removed.length} app${removed.length === 1 ? '' : 's'}` +
+        (failed.length
+          ? ` · ${failed.length} still there: ${failed.join(', ')}`
+          : '.'),
+      ok: failed.length === 0,
+    });
+    await loadDebloat(false);
+    setDebloatSel(new Set(failed)); // leave the failures ticked to retry
+    refreshInstalled(); // keep the Apps list's badges honest
+    setVersionsTick(t => t + 1);
+  }, [debloatBusy, debloatSel, debloatArmed, bridgeFetch, loadDebloat, refreshInstalled]);
+
   // Load a Power-tools list when its screen opens (each fetch is over ElevSH).
   useEffect(() => {
     if (selectedId === '__systemapps__') loadSystemApps();
     else if (selectedId === '__runningapps__') loadRunningApps();
+    else if (selectedId === '__debloat__') loadDebloat(true);
     else if (selectedId === '__terminal__') setCmdOut(null);
-  }, [selectedId, loadSystemApps, loadRunningApps]);
+  }, [selectedId, loadSystemApps, loadRunningApps, loadDebloat]);
 
   // The splash screen is dismissed exactly once: the intro drops it as soon as
   // it has painted, and loadCatalog keeps the same guard as a backstop in case
@@ -1309,6 +1456,12 @@ const Hub = () => {
                 onPress={() => setSelectedId('__runningapps__')}
               />
               <ToolRow
+                title="De-bloat"
+                summary="Tick preinstalled apps and remove them — preset included"
+                action="Open"
+                onPress={() => setSelectedId('__debloat__')}
+              />
+              <ToolRow
                 title="Run a command"
                 summary="A tiny terminal — `vega device run-cmd` on the stick"
                 action="Open"
@@ -1344,6 +1497,108 @@ const Hub = () => {
           ) : null}
 
           <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
+            <Text style={styles.backText}>Back</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // Power tools → "De-bloat": tick installed apps and remove them over ElevSH.
+  if (selectedId === '__debloat__') {
+    const removable = (sysApps ?? []).filter(id => !DEBLOAT_KEEP.has(id));
+    const shown = debloatShowAll
+      ? removable
+      : removable.filter(id => DEBLOAT_PRESET_MAP.has(id));
+    const selCount = debloatSel.size;
+    const disabled = !selCount || debloatBusy;
+    return (
+      <View style={styles.wrap}>
+        <View style={styles.header}>
+          <Text style={styles.brand}>De-bloat</Text>
+          <Text style={styles.tagline}>
+            Remove preinstalled apps you never use. The preset ticks the usual
+            suspects: streaming apps that ship on the stick, plus Amazon's ad,
+            recommendation and telemetry services. Everything here can come
+            back from the Appstore, so nothing is permanent.
+          </Text>
+        </View>
+        <ScrollView contentContainerStyle={styles.list}>
+          {toolBusy ? <Text style={styles.pcInfo}>{toolBusy}</Text> : null}
+
+          <View style={styles.bar}>
+            <Pressable
+              style={focusable([styles.refreshBtn, styles.barBtn])}
+              onPress={applyDebloatPreset}>
+              <Text style={styles.refreshText}>Use preset</Text>
+            </Pressable>
+            <Pressable
+              style={focusable([styles.refreshBtn, styles.barBtn])}
+              onPress={clearDebloat}>
+              <Text style={styles.refreshText}>Clear</Text>
+            </Pressable>
+            <Pressable
+              style={focusable([styles.refreshBtn, styles.barBtn])}
+              onPress={() => setDebloatShowAll(v => !v)}>
+              <Text style={styles.refreshText}>
+                {debloatShowAll ? 'Preset only' : 'Show all apps'}
+              </Text>
+            </Pressable>
+          </View>
+
+          <Text style={styles.dim}>
+            {selCount} selected · {shown.length} shown
+            {debloatShowAll ? '' : ' (the preset)'}
+          </Text>
+
+          {sysApps == null ? (
+            <View style={styles.center}>
+              <ActivityIndicator size="large" color={theme.palette.text} />
+            </View>
+          ) : shown.length === 0 ? (
+            <Text style={styles.dim}>Nothing to remove here.</Text>
+          ) : (
+            shown.map((id, i) => {
+              const name = DEBLOAT_PRESET_MAP.get(id);
+              return (
+                <DebloatRow
+                  key={id}
+                  first={i === 0}
+                  checked={debloatSel.has(id)}
+                  title={name || id}
+                  subtitle={name ? id : undefined}
+                  onPress={() => toggleDebloat(id)}
+                />
+              );
+            })
+          )}
+
+          <Pressable
+            disabled={disabled}
+            style={focusable([styles.removeBtn, disabled && styles.idleBtn])}
+            onPress={removeDebloatSelected}>
+            <Text style={[styles.removeBtnText, disabled && styles.idleText]}>
+              {debloatBusy
+                ? 'Removing…'
+                : debloatArmed
+                ? `Tap again to remove ${selCount}`
+                : `Remove selected (${selCount})`}
+            </Text>
+          </Pressable>
+
+          {toolOut ? (
+            <View style={styles.toolOut}>
+              <Text style={styles.toolOutTitle}>
+                {toolOut.title}
+                {toolOut.ok ? '' : ' — failed'}
+              </Text>
+              <Text style={styles.toolOutText} numberOfLines={12}>
+                {toolOut.text}
+              </Text>
+            </View>
+          ) : null}
+
+          <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
             <Text style={styles.backText}>Back</Text>
           </Pressable>
         </ScrollView>
@@ -2095,6 +2350,42 @@ const ToolRow = ({
 };
 
 /**
+ * A tick row on the De-bloat screen: a checkbox, the app's name (or its id when
+ * the preset has no friendly one), and the id underneath for preset entries.
+ */
+const DebloatRow = ({
+  title,
+  subtitle,
+  checked,
+  first,
+  onPress,
+}: {
+  title: string;
+  subtitle?: string;
+  checked: boolean;
+  first: boolean;
+  onPress: () => void;
+}) => {
+  const {styles} = useAppTheme();
+  return (
+    <Pressable
+      hasTVPreferredFocus={first}
+      focusable
+      style={({focused}) => [styles.toolRow, focused && styles.rowFocused, focused && styles.focused]}
+      onPress={onPress}>
+      <View style={[styles.checkBox, checked && styles.checkBoxOn]}>
+        {checked ? <Text style={styles.checkMark}>✓</Text> : null}
+      </View>
+      <View style={styles.toolMain}>
+        <Text style={styles.toolTitle}>{title}</Text>
+        {subtitle ? <Text style={styles.toolSummary}>{subtitle}</Text> : null}
+      </View>
+      <Text style={styles.toolOpen}>{checked ? 'Remove' : 'Keep'}</Text>
+    </Pressable>
+  );
+};
+
+/**
  * A row of colour choices on the Themes screen. The active one gets a focus
  * -coloured ring; focus (not selection) comes from the shared `focused` style.
  */
@@ -2382,6 +2673,31 @@ const makeStyles = (t: ResolvedTheme) => {
   toolSummary: {color: t.textDim, fontSize: 14, marginTop: 2},
   toolDanger: {color: t.dangerText},
   toolOpen: {color: t.link, fontSize: 15, fontWeight: '600'},
+  // De-bloat: tick boxes, the control bar, and the red remove button.
+  checkBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: t.border,
+    marginRight: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkBoxOn: {backgroundColor: t.accent, borderColor: t.accent},
+  checkMark: {color: t.accentText, fontSize: 20, fontWeight: '700'},
+  bar: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 10},
+  barBtn: {marginRight: 12, marginBottom: 8},
+  removeBtn: {
+    backgroundColor: t.dangerSoft,
+    borderRadius: 10,
+    ...buttonBase,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    alignSelf: 'flex-start',
+    marginTop: 16,
+  },
+  removeBtnText: {color: t.dangerText, fontSize: 18, fontWeight: '600'},
   toolOut: {
     marginTop: 14,
     backgroundColor: t.surfaceDeep,

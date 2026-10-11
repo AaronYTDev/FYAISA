@@ -35,7 +35,7 @@
       "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.7.0",
+      "version": "1.8.0",
       "updated": "2026-10-11",
       "install": {
         "kind": "vpkg-release",
@@ -45,6 +45,7 @@
       "notes": [
         "The FYAISA hub app itself. Update it from here.",
         "Opens with a short wordmark intro: the letters spread out and spell out what the acronym means. Any remote press skips it.",
+        "Power Tools gains a de-bloater: tick preinstalled apps you never use — a preset covers the usual suspects — and remove them over ElevSH.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },
