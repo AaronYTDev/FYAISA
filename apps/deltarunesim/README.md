@@ -12,7 +12,7 @@ to the simulator's keyboard controls.
   not affiliated with or endorsed by Toby Fox. DELTARUNE and UNDERTALE are
   (c) Toby Fox. Buy the real games: <https://deltarune.com>.
 - **Madrinth** — the Vega OS WebView shell and the TV remote mapping.
-- **aaronYTDev** — the hub, and the Snake app whose key plumbing this is
+- **FYAISA** — the hub, and the Snake app whose key plumbing this is
   built on.
 
 ## Controls
