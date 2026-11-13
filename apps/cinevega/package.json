@@ -1,6 +1,6 @@
 {
   "name": "@fyaisa/cinevega",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Cinevega streaming for Vega OS Fire TV Sticks (FYAISA hub app).",
   "author": "FYAISA contributors",

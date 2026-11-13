@@ -159,8 +159,8 @@
       "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.0.0",
-      "updated": "2026-10-10",
+      "version": "1.0.1",
+      "updated": "2026-11-13",
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
@@ -168,6 +168,8 @@
       },
       "notes": [
         "Native React Native frontend with TMDB metadata and VidSrc playback.",
+        "Fixed: declares com.amazon.network.service so TMDB and VidSrc can be reached.",
+        "Fixed: VidSrc mirror fallbacks (vidsrc.to, .cc, .xyz, .pro, .net) — if one domain dies, the app tries the next.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },

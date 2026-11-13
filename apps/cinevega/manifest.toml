@@ -2,7 +2,7 @@ schema-version = 1
 
 [package]
 title = "Cinevega"
-version = "1.0.0"
+version = "1.0.1"
 id = "app.cinevega"
 icon = "@image/cinevega.png"
 
@@ -13,9 +13,6 @@ target = "1.2"
 [needs]
 [[needs.module]]
 id = "/com.amazon.vega.os@IVega_1_2"
-
-[[needs.privilege]]
-id = "com.amazon.privilege.security.file-sharing"
 
 [[needs.module]]
 id = "/com.amazon.kepler.keplerscript_4@IKeplerScript_0"
@@ -34,39 +31,16 @@ launch-type = "singleton"
 categories = ["com.amazon.category.main"]
 
 [wants]
+# TMDB metadata and VidSrc playback both need network access.
+[[wants.service]]
+id = "com.amazon.network.service"
+
 [[wants.service]]
 id = "com.amazon.webview.renderer_service"
 
+# D-pad and remote keys must reach the app
 [[wants.service]]
 id = "com.amazon.inputmethod.service"
 
 [[wants.service]]
 id = "com.amazon.media.server"
-
-[[wants.service]]
-id = "com.amazon.mediametrics.service"
-
-[[wants.service]]
-id = "com.amazon.mediabuffer.service"
-[[wants.service]]
-id = "com.amazon.mediatransform.service"
-
-[[wants.service]]
-id = "com.amazon.audio.stream"
-
-[[wants.service]]
-id = "com.amazon.audio.control"
-
-[[wants.service]]
-id = "com.amazon.drm.key"
-[[wants.service]]
-id = "com.amazon.drm.crypto"
-
-[[wants.service]]
-id = "com.amazon.kepler.ucc.publisher"
-
-[[wants.service]]
-id = "com.amazon.gipc.uuid.*"
-[offers]
-[[offers.service]]
-id = "com.amazon.gipc.uuid.*"

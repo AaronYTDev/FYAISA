@@ -31,7 +31,7 @@ exits.
 ```bash
 npm install
 npm run build:release
-vega device install-app -p build/armv7-release/cinevega_armv7.vpkg
+vega device install-app --dir . -b Release
 ```
 
 Or from the repo root:
@@ -39,6 +39,14 @@ Or from the repo root:
 ```bash
 ./fyaisa install app.cinevega.main
 ```
+
+## What was fixed (1.0.1)
+
+- **`com.amazon.network.service` added to `manifest.toml`** — the app calls the TMDB API and VidSrc over HTTPS but never declared network access, so every network call failed. This was the main reason Cinevega "didn't work."
+- **Invalid `[offers]` section removed** — `com.amazon.gipc.uuid.*` is not a valid service ID and broke the build.
+- **Unnecessary DRM/media service wants removed** — `com.amazon.drm.*`, `com.amazon.media.server`, `com.amazon.mediametrics.service`, etc. are not needed for VidSrc playback and can cause install rejection.
+- **VidSrc mirror fallbacks** — VidSrc domains change often. The player now tries `vidsrc.to`, `vidsrc.cc`, `vidsrc.xyz`, `vidsrc.pro`, and `vidsrc.net` in order; if one mirror fails (HTTP error or load error), it automatically moves to the next.
+- **install script fixed** — `scripts/install-device.sh` now uses `vega device install-app --dir . -b Release` instead of a hardcoded `.vpkg` path that didn't match the build output.
 
 ## FYAISA
 

@@ -5,4 +5,4 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 rm -rf build buildinfo.json
 npm run build:release
-vega device install-app -p build/armv7-release/cinevega_armv7.vpkg
+vega device install-app --dir . -b Release

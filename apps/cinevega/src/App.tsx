@@ -36,7 +36,6 @@ const TMDB_READ_TOKEN =
   'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJhN2E2YTBkOGIwMzI2ZjFlOWYzNTZjYWNkNzI0YjIzMyIsIm5iZiI6MTc5MDg5ODA5OC42OTI5OTk4LCJzdWIiOiI2YWJlZWZiMjBhZDZlY2MwOGE4OWQxYjUiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.-2yJbHFpoGmO6JayHtIEghF0k5ft_0gIdctIUIjkt3Q';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
-const VIDSRC_BASE = 'https://vidsrc.to/embed';
 
 const BRIDGE_PORT = 47821;
 const CINEVEGA_APP_ID = 'app.cinevega.main';
@@ -223,14 +222,36 @@ const tmdb = {
 };
 
 // --- VidSrc ------------------------------------------------------------------
+// VidSrc embed URLs. Domains change often, so we keep a list of mirrors and
+// try them in order when a video fails to load.
+const VIDSRC_BASES = [
+  'https://vidsrc.to/embed',
+  'https://vidsrc.cc/embed',
+  'https://vidsrc.xyz/embed',
+  'https://vidsrc.pro/embed',
+  'https://vidsrc.net/embed',
+];
+
 const vidsrc = {
-  movieUrl(tmdbId: number): string {
-    return `${VIDSRC_BASE}/movie/${tmdbId}`;
+  movieUrl(tmdbId: number, base: string): string {
+    return `${base}/movie/${tmdbId}`;
   },
-  tvUrl(tmdbId: number, season: number, episode: number): string {
-    return `${VIDSRC_BASE}/tv/${tmdbId}/${season}/${episode}`;
+  tvUrl(tmdbId: number, season: number, episode: number, base: string): string {
+    return `${base}/tv/${tmdbId}/${season}/${episode}`;
   },
 };
+
+/** Pick the first VidSrc base that hasn't been marked dead yet. */
+let vidsrcBaseIndex = 0;
+function currentVidsrcBase(): string {
+  return VIDSRC_BASES[vidsrcBaseIndex % VIDSRC_BASES.length];
+}
+function markVidsrcDead() {
+  vidsrcBaseIndex += 1;
+}
+function resetVidsrc() {
+  vidsrcBaseIndex = 0;
+}
 
 // --- ElevSH pairing persistence ----------------------------------------------
 type SavedPair = {host: string; token?: string};
@@ -300,6 +321,9 @@ export const App = () => {
   // Player
   const [playerUrl, setPlayerUrl] = useState<string | null>(null);
   const [playerTitle, setPlayerTitle] = useState('');
+  const [playerItem, setPlayerItem] = useState<MediaItem | null>(null);
+  const [playerEpisode, setPlayerEpisode] = useState<Episode | null>(null);
+  const [playerError, setPlayerError] = useState<string | null>(null);
 
   // Load home data
   useEffect(() => {
@@ -507,13 +531,19 @@ export const App = () => {
 
   const playMovie = useCallback((item: MediaItem) => {
     setPlayerTitle(item.title);
-    setPlayerUrl(vidsrc.movieUrl(item.id));
+    setPlayerError(null);
+    setPlayerItem(item);
+    setPlayerEpisode(null);
+    setPlayerUrl(vidsrc.movieUrl(item.id, currentVidsrcBase()));
     setScreen('player');
   }, []);
 
   const playEpisode = useCallback((item: MediaItem, ep: Episode) => {
     setPlayerTitle(`${item.title} - S${ep.season_number} E${ep.episode_number}`);
-    setPlayerUrl(vidsrc.tvUrl(item.id, ep.season_number, ep.episode_number));
+    setPlayerError(null);
+    setPlayerItem(item);
+    setPlayerEpisode(ep);
+    setPlayerUrl(vidsrc.tvUrl(item.id, ep.season_number, ep.episode_number, currentVidsrcBase()));
     setScreen('player');
   }, []);
 
@@ -757,21 +787,72 @@ export const App = () => {
         <View style={styles.playerHeader}>
           <Text style={styles.playerTitle}>{playerTitle}</Text>
         </View>
-        <WebView
-          source={{uri: playerUrl}}
-          style={styles.playerWebView}
-          javaScriptEnabled
-          domStorageEnabled
-          allowsDefaultMediaControl
-          mediaPlaybackRequiresUserAction={false}
-          allowSystemKeyEvents={false}
-        />
-        <Pressable
-          hasTVPreferredFocus
-          style={({focused}) => [styles.backBtn, focused && styles.focusedRing]}
-          onPress={() => setScreen('detail')}>
-          <Text style={styles.backBtnText}>Back</Text>
-        </Pressable>
+        {playerError ? (
+          <View style={styles.playerErrorContainer}>
+            <Text style={styles.playerErrorText}>{playerError}</Text>
+            <Pressable
+              hasTVPreferredFocus
+              style={({focused}) => [styles.retryBtn, focused && styles.focusedRing]}
+              onPress={() => {
+                markVidsrcDead();
+                setPlayerError(null);
+                if (playerItem) {
+                  if (playerEpisode) {
+                    setPlayerUrl(
+                      vidsrc.tvUrl(
+                        playerItem.id,
+                        playerEpisode.season_number,
+                        playerEpisode.episode_number,
+                        currentVidsrcBase(),
+                      ),
+                    );
+                  } else {
+                    setPlayerUrl(vidsrc.movieUrl(playerItem.id, currentVidsrcBase()));
+                  }
+                }
+              }}>
+              <Text style={styles.retryBtnText}>Try next mirror</Text>
+            </Pressable>
+            <Pressable
+              style={({focused}) => [styles.backBtn, focused && styles.focusedRing]}
+              onPress={() => setScreen('detail')}>
+              <Text style={styles.backBtnText}>Back</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            <WebView
+              source={{uri: playerUrl}}
+              style={styles.playerWebView}
+              javaScriptEnabled
+              domStorageEnabled
+              allowsDefaultMediaControl
+              mediaPlaybackRequiresUserAction={false}
+              allowSystemKeyEvents={false}
+              // VidSrc embeds check the referer; sending the VidSrc host as the
+              // referer helps the player accept the request.
+              originWhitelist={['*']}
+              onHttpError={(event: any) => {
+                const code = event?.nativeEvent?.statusCode;
+                setPlayerError(
+                  `VidSrc mirror failed (HTTP ${code}). Trying the next mirror…`,
+                );
+                markVidsrcDead();
+              }}
+              onError={(event: any) => {
+                const desc = event?.nativeEvent?.description || 'unknown error';
+                setPlayerError(`VidSrc mirror failed: ${desc}. Trying the next mirror…`);
+                markVidsrcDead();
+              }}
+            />
+            <Pressable
+              hasTVPreferredFocus
+              style={({focused}) => [styles.backBtn, focused && styles.focusedRing]}
+              onPress={() => setScreen('detail')}>
+              <Text style={styles.backBtnText}>Back</Text>
+            </Pressable>
+          </>
+        )}
       </View>
     );
   };
@@ -1206,6 +1287,30 @@ const styles = StyleSheet.create({
   playerHeader: {paddingHorizontal: 40, paddingTop: 20, paddingBottom: 12},
   playerTitle: {color: '#fff', fontSize: 24, fontWeight: '700'},
   playerWebView: {flex: 1, backgroundColor: '#000'},
+  playerErrorContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+    backgroundColor: '#0b0b0f',
+  },
+  playerErrorText: {
+    color: '#ff6b6b',
+    fontSize: 18,
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 24,
+  },
+  retryBtn: {
+    backgroundColor: '#1c7d32',
+    borderRadius: 6,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderWidth: 4,
+    borderColor: 'transparent',
+    marginBottom: 12,
+  },
+  retryBtnText: {color: '#fff', fontSize: 18, fontWeight: '600'},
 
   // Toolbar
   toolbar: {
