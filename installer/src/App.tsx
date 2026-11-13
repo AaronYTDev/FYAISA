@@ -43,6 +43,8 @@ import {
 
 const CATALOG_URL = 'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json';
 const HUB_URL = 'https://github.com/AaronYTDev/FYAISA';
+/** Hub version, kept in step with installer/manifest.toml. */
+const HUB_VERSION = '1.9.3';
 
 /**
  * Row icons: the same artwork the launcher tiles use, bundled with the hub
@@ -397,7 +399,7 @@ const Hub = () => {
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
   const apps = useMemo(() => {
-    const all = (catalog?.apps ?? []).filter(a => a.id !== 'app.cinevega.main');
+    const all = catalog?.apps ?? [];
     // FYAISA updates last: updating it closes the hub, so anything after it
     // would never get updated by "Update All".
     return [...all].sort((a, b) => {
@@ -1400,6 +1402,11 @@ const Hub = () => {
           theme.background === 'none' ? 'static' : `${theme.background} background`
         }, ${theme.buttonEffect} buttons`,
       },
+      {
+        id: '__about__',
+        title: 'About',
+        summary: `FYAISA ${HUB_VERSION} · ${apps.length} app${apps.length === 1 ? '' : 's'} in the catalog`,
+      },
     ];
     return (
       <View style={styles.wrap}>
@@ -2102,6 +2109,45 @@ const Hub = () => {
               <Text style={styles.backText}>Back</Text>
             </Pressable>
           </View>
+        </ScrollView>
+      </View>
+    );
+  }
+
+  // About: hub version, credits, license, and what's in the catalog.
+  if (selectedId === '__about__') {
+    return (
+      <View style={styles.wrap}>
+        <ScrollView contentContainerStyle={styles.list}>
+          <View style={styles.card}>
+            <Text style={styles.brand}>FYAISA</Text>
+            <Text style={styles.tagline}>{catalog?.hub?.tagline ?? 'A community hub for sideloaded homebrew on Vega OS Fire TV devices.'}</Text>
+            <Text style={styles.meta}>Version {HUB_VERSION}</Text>
+            <Text style={styles.meta}>License: GPL-3.0-only</Text>
+            <Text style={styles.meta}>
+              {apps.length} app{apps.length === 1 ? '' : 's'} in the catalog
+              {catalog?.apps ? '' : ' (offline list)'}
+            </Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.sectionTitle}>Credits</Text>
+            <Text style={styles.note}>
+              Designed by aaronYTDev. Oh, and Madrinth.
+            </Text>
+            <Text style={styles.sectionTitle}>Source</Text>
+            <Text style={styles.code}>{HUB_URL}</Text>
+            <Text style={styles.note}>
+              FYAISA is not affiliated with Amazon or Google. It uses Amazon's
+              official Vega developer tools. Installing software onto your own
+              device is your call — respect Amazon's and Google's terms, and the
+              licenses of the apps you install.
+            </Text>
+          </View>
+
+          <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
+            <Text style={styles.backText}>Back</Text>
+          </Pressable>
         </ScrollView>
       </View>
     );

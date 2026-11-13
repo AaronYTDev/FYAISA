@@ -53,6 +53,47 @@
       ]
     },
     {
+      "id": "app.tvtimer.main",
+      "name": "TV Timer",
+      "summary": "Stopwatch and countdown timer for your Fire TV. Works fully offline, driven by the remote.",
+      "description": "TV Timer is a stopwatch and a countdown timer in one app for Vega OS Fire TV Sticks. Pure React Native UI — no WebView, no network, nothing to sign in to. The remote drives it: D-pad switches mode and adjusts minutes, OK starts and stops, Menu resets, Back quits. Great for cooking timers, workout rests, or anything you want to time from the couch.",
+      "path": "apps/tvtimer",
+      "license": "GPL-3.0-only",
+      "author": "FYAISA contributors",
+      "homepage": "https://github.com/AaronYTDev/FYAISA",
+      "minOsVersion": "1.2",
+      "targetOsVersion": "1.2",
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "timer",
+        "stopwatch",
+        "countdown",
+        "utility",
+        "offline",
+        "native"
+      ],
+      "containsAds": false,
+      "requiresNetwork": false,
+      "drm": false,
+      "status": "stable",
+      "version": "1.0.0",
+      "updated": "2026-11-13",
+      "install": {
+        "kind": "vpkg-release",
+        "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/tvtimer with the Vega SDK."
+      },
+      "notes": [
+        "Pure React Native — no WebView, no network, works fully offline.",
+        "D-pad switches mode and adjusts minutes, OK starts/stops, Menu resets, Back quits.",
+        "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ]
+    },
+    {
       "id": "app.smb.main",
       "name": "Super Mario Bros",
       "summary": "NES SMB emulator for Vega OS Fire TV Sticks (no ROM bundled). Downloads ROM from external source on first launch.",

@@ -116,7 +116,7 @@ def f(a, k, d=""):
 
 if mode == "list":
     for a in apps:
-        print("{:<30} {:<16} {}".format(f(a,'id'), f(a,'name'), f(a,'status','?')))
+        print("{:<30} {:<16} {:<10} {}".format(f(a,'id'), f(a,'name'), f(a,'version','-'), f(a,'status','?')))
         s = f(a,'summary')
         if s:
             print("  " + s)
