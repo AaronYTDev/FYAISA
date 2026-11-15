@@ -90,11 +90,14 @@ function log(...a) {
 // ---------------------------------------------------------------------------
 function readCatalog() {
   const file = path.join(HOST_DIR, 'catalog.json');
-  if (!fs.existsSync(file)) return { apps: [] };
+  if (!fs.existsSync(file)) {
+    log(`catalog not found at ${file}; bridge will serve an empty catalog`);
+    return { apps: [] };
+  }
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (e) {
-    log('catalog parse failed:', e.message);
+    log(`catalog parse failed at ${file}: ${e.message}; serving empty catalog`);
     return { apps: [] };
   }
 }
@@ -261,6 +264,30 @@ async function installApp(appId, job, opts = {}) {
     await run('vega', ['exec', 'vda', 'connect', `${opts.deviceIp}:5555`], HOST_DIR, (l) =>
       job.log.push(l),
     );
+  }
+
+  // Pre-flight: confirm the device is actually visible to `vega device list`
+  // before we spend time building. Failing here is fast; failing after a long
+  // npm build is frustrating.
+  if (opts.deviceIp) {
+    const seen = [];
+    const rc = await run(
+      'vega',
+      ['device', 'list'],
+      HOST_DIR,
+      (l) => {
+        if (l.includes(opts.deviceIp)) seen.push(l);
+        job.log.push(l);
+      },
+    );
+    if (rc !== 0 || seen.length === 0) {
+      job.status = 'error';
+      job.log.push(
+        `Device ${opts.deviceIp} not visible to vega device list — is the Fire TV awake and in Developer Mode?`,
+      );
+      return;
+    }
+    job.log.push(`Device ${opts.deviceIp} confirmed online.`);
   }
 
   // ---- patch install ------------------------------------------------------

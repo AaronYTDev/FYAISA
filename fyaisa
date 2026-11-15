@@ -174,18 +174,30 @@ app_version() {
   sed -n 's/^version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$1/manifest.toml" 2>/dev/null | head -n1
 }
 
-# Numeric dotted compare: -1, 0 or 1 for $1 against $2. Anything non-numeric
-# counts as 0, so 1.5 and 1.5.0 are the same.
+# Numeric dotted compare: -1, 0 or 1 for $1 against $2.
+# Handles pre-release suffixes: 1.0.0-beta < 1.0.0 < 1.0.0-rc1 < 1.0.1.
+# A segment's numeric prefix is compared first; on tie, a bare number beats
+# anything with a suffix, and suffixes compare lexicographically.
 version_cmp() {
-  local -a av bv; local i x y
+  local -a av bv; local i x y xs ys
   IFS=. read -r -a av <<< "$1"
   IFS=. read -r -a bv <<< "$2"
   for ((i = 0; i < ${#av[@]} || i < ${#bv[@]}; i++)); do
     x="${av[i]:-0}"; y="${bv[i]:-0}"
-    x="${x//[!0-9]/}"; y="${y//[!0-9]/}"
-    x=$((10#${x:-0})); y=$((10#${y:-0}))
+    # Split numeric prefix from any pre-release suffix.
+    xs="${x//[!0-9]/}"; ys="${y//[!0-9]/}"
+    x=$((10#${xs:-0})); y=$((10#${ys:-0}))
     (( x < y )) && { printf '%s' -1; return; }
     (( x > y )) && { printf '%s' 1; return; }
+    # Numeric parts equal: a bare segment outranks one with a suffix.
+    if [[ "$x" != "$xs" || "$y" != "$ys" ]]; then
+      if [[ "$x" == "$xs" && "$y" != "$ys" ]]; then printf '%s' 1; return; fi
+      if [[ "$x" != "$xs" && "$y" == "$ys" ]]; then printf '%s' -1; return; fi
+      # Both have suffixes — compare them lexicographically.
+      local sx="${x#$xs}" sy="${y#$ys}"
+      if [[ "$sx" < "$sy" ]]; then printf '%s' -1; return; fi
+      if [[ "$sx" > "$sy" ]]; then printf '%s' 1; return; fi
+    fi
   done
   printf '%s' 0
 }
