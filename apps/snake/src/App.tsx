@@ -515,6 +515,11 @@ export const App = () => {
     const web = webRef.current as any;
     if (web?.injectJavaScript) {
       try {
+        // Inject EARLY_PROBE first: it sets up window.__snakeMode/Cursor and
+        // registers a document-start key listener ahead of Google's handlers.
+        // injectedJavaScriptBeforeContentLoaded doesn't run on Vega OS 2.0,
+        // so we do it imperatively here like VegaTube does.
+        web.injectJavaScript(EARLY_PROBE);
         web.injectJavaScript(CONTROL_PROBE);
       } catch (err) {
         console.warn('[snake] injectJavaScript failed:', err);

@@ -59,6 +59,7 @@ const APP_ICONS: Record<string, any> = {
   'app.fyaisa.files.main': require('../assets/image/fileexplorer.png'),
   'app.cinevega.main': require('../assets/image/cinevega.png'),
   'app.fyaisa.hub.main': require('../assets/image/fyaisa.png'),
+  'app.tvtimer.main': require('../assets/image/tvtimer.png'),
 };
 
 type HubApp = {
@@ -199,6 +200,30 @@ const FALLBACK_CATALOG: Catalog = {
         "id Software's DOOM Episode One, compiled to WebAssembly, running fully offline on your Fire TV.",
       license: 'GPL-3.0-only',
       tags: ['game', 'doom', 'wasm', 'offline'],
+      status: 'stable',
+    },
+    {
+      id: 'app.cinevega.main',
+      name: 'Cinevega',
+      summary: 'Movies and TV streaming with TMDB metadata and VidSrc playback.',
+      license: 'GPL-3.0-only',
+      tags: ['movies', 'tv', 'streaming', 'vidsrc'],
+      status: 'stable',
+    },
+    {
+      id: 'app.smb.main',
+      name: 'Super Mario Bros',
+      summary: 'NES SMB emulator (jsnes). Downloads the ROM on first launch.',
+      license: 'GPL-3.0-only',
+      tags: ['game', 'nes', 'smb', 'emulator'],
+      status: 'beta',
+    },
+    {
+      id: 'app.tvtimer.main',
+      name: 'TV Timer',
+      summary: 'Stopwatch and countdown timer for your Fire TV. Works fully offline.',
+      license: 'GPL-3.0-only',
+      tags: ['timer', 'stopwatch', 'countdown', 'utility', 'offline'],
       status: 'stable',
     },
   ],

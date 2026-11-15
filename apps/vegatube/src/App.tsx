@@ -285,6 +285,14 @@ export const App = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pageLoaded, setPageLoaded] = useState(false);
 
+  // Track whether TizenTube has been injected for the current page session.
+  // YouTube TV is a single-page app: navigating between videos fires
+  // onNavigationStateChange without reloading the page. Re-injecting the
+  // script on every navigation is what makes every third video choppy — the
+  // players and ad-block hooks pile up and fight each other. Inject once per
+  // page load, reset on reload/error.
+  const injectedRef = useRef(false);
+
   // Cold-start recovery. Right after a sideload the first launch can fail with
   // net::ERR_FAILED while the app's network/renderer stack is still warming up
   // (observed on a real Fire TV Stick HD). Retry the load a few times before
@@ -384,6 +392,12 @@ export const App = () => {
    * implements it) can never double-install the patches.
    */
   const injectTizenTube = useCallback(() => {
+    // Already injected for this page session — skip. The sentinel set by the
+    // prelude makes re-injection a no-op anyway, but skipping early avoids
+    // flooding the bridge with chunked injectJavaScript calls.
+    if (injectedRef.current) {
+      return;
+    }
     const web = webRef.current as any;
     if (!web?.injectJavaScript) {
       console.warn('[VegaTube] injectJavaScript unavailable on this WebView');
@@ -403,6 +417,7 @@ export const App = () => {
       // Sent last: waits for every chunk to land, then executes.
       web.injectJavaScript(buildTriggerScript(INJECTION_CHUNK_COUNT));
 
+      injectedRef.current = true;
       console.info(
         `[VegaTube] injected ${(INJECTION_JS.length / 1024).toFixed(0)} KB ` +
           `of TizenTube script in ${INJECTION_CHUNK_COUNT} chunks ` +
@@ -420,10 +435,12 @@ export const App = () => {
       autoRetryRef.current = 0;
       setLoadError(null);
       setPageLoaded(true);
+      // New page session: allow re-injection of TizenTube.
+      injectedRef.current = false;
       hideSplashScreenCallback();
       injectTizenTube();
     },
-    [hideSplashScreenCallback],
+    [hideSplashScreenCallback, injectTizenTube],
   );
 
   const onLoadStart = useCallback((_event: WebViewNavigationEvent) => {
@@ -442,6 +459,8 @@ export const App = () => {
       console.error(`[VegaTube] ${reason}`);
       // Never leave the splash screen up on failure.
       hideSplashScreenCallback();
+      // New page session on reload: allow re-injection.
+      injectedRef.current = false;
 
       if (autoRetryRef.current < MAX_AUTO_RETRIES) {
         const attempt = autoRetryRef.current + 1;
@@ -501,6 +520,7 @@ export const App = () => {
     }
     setLoadError(null);
     setPageLoaded(false);
+    injectedRef.current = false;
     (webRef.current as any)?.reload();
   }, []);
 

@@ -70,6 +70,13 @@ export const App = () => {
   const sentRef = useRef(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Cold-start recovery: the first launch after a sideload can fail once while
+  // the WebView stack warms up. Retry automatically a few times.
+  const autoRetryRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const MAX_AUTO_RETRIES = 3;
+  const RETRY_BASE_DELAY_MS = 1500;
+
   const sendGame = useCallback(() => {
     const web = webRef.current as any;
     if (sentRef.current) {
@@ -95,6 +102,8 @@ export const App = () => {
   const onLoad = useCallback(() => {
     console.info('[doom] shell loaded');
     hideSplashScreenCallback();
+    autoRetryRef.current = 0;
+    setLoadError(null);
     sendGame();
   }, [hideSplashScreenCallback, sendGame]);
 
@@ -103,10 +112,35 @@ export const App = () => {
       const description = event?.nativeEvent?.description || 'unknown error';
       console.error(`[doom] WebView error: ${description}`);
       hideSplashScreenCallback();
+      sentRef.current = false;
+
+      if (autoRetryRef.current < MAX_AUTO_RETRIES) {
+        const attempt = autoRetryRef.current + 1;
+        const delay = RETRY_BASE_DELAY_MS * attempt;
+        console.info(`[doom] load failed; auto-retry ${attempt}/${MAX_AUTO_RETRIES} in ${delay}ms`);
+        autoRetryRef.current = attempt;
+        if (retryTimerRef.current) {
+          clearTimeout(retryTimerRef.current);
+        }
+        retryTimerRef.current = setTimeout(() => {
+          (webRef.current as any)?.reload();
+        }, delay);
+        return;
+      }
       setLoadError(description);
     },
     [hideSplashScreenCallback],
   );
+
+  const retry = useCallback(() => {
+    autoRetryRef.current = 0;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+    }
+    setLoadError(null);
+    sentRef.current = false;
+    (webRef.current as any)?.reload();
+  }, []);
 
   const onMessage = useCallback((event: any) => {
     try {
@@ -186,6 +220,12 @@ export const App = () => {
         <View style={styles.errorOverlay} pointerEvents="none">
           <Text style={styles.errorText}>Couldn&apos;t start DOOM</Text>
           <Text style={styles.errorDetail}>{loadError}</Text>
+          <Pressable
+            hasTVPreferredFocus
+            style={({focused}) => [styles.retryButton, focused && styles.focusedRing]}
+            onPress={retry}>
+            <Text style={styles.retryText}>Retry</Text>
+          </Pressable>
         </View>
       ) : null}
     </View>
@@ -221,5 +261,25 @@ const styles = StyleSheet.create({
     color: '#9e9e9e',
     fontSize: 14,
     textAlign: 'center',
+  },
+  retryButton: {
+    marginTop: 24,
+    paddingHorizontal: 32,
+    paddingVertical: 12,
+    backgroundColor: '#1c7d32',
+    borderRadius: 6,
+  },
+  retryText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '600',
+  },
+  focusedRing: {
+    borderColor: '#ffb02e',
+    shadowColor: '#ffb02e',
+    shadowOpacity: 0.85,
+    shadowRadius: 10,
+    shadowOffset: {width: 0, height: 0},
+    elevation: 10,
   },
 });

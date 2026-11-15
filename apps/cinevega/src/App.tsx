@@ -26,6 +26,8 @@ import {Pressable} from '@amazon-devices/react-native-kepler';
 import {
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
+  useTVEventHandler,
+  type HWEvent,
 } from '@amazon-devices/react-native-kepler';
 import {KeplerFileSystem} from '@amazon-devices/kepler-file-system';
 import {Fyaisa, FyaisaError} from './fyaisaClient';
@@ -386,7 +388,13 @@ export const App = () => {
     };
   }, []);
 
-  // Back handling
+  // Back handling.
+  //
+  // The player runs with allowSystemKeyEvents={false} so the VidSrc page gets
+  // the D-pad and Enter it needs — but that also traps focus inside the
+  // WebView, so the on-screen Back button can't be D-pad-reached while a
+  // video plays. Catch Back natively here so the hardware Back button always
+  // exits the player, no matter where focus is.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (menu !== 'hidden') {
@@ -409,6 +417,65 @@ export const App = () => {
     });
     return () => sub.remove();
   }, [screen, menu]);
+
+  // TV event handler for the player: with allowSystemKeyEvents off, all keys
+  // go to the WebView, so intercept Back/Menu here to give the remote a
+  // reliable way out of the player. On other screens the native focus rings
+  // handle D-pad navigation normally.
+  useTVEventHandler(
+    useCallback((event: HWEvent) => {
+      if (event.eventKeyAction !== 0) {
+        return; // act on the press, not the release
+      }
+      if (screen !== 'player') {
+        return;
+      }
+      const type = event.eventType;
+      if (type === 'back' || type === 'select') {
+        // Back exits the player; OK/Enter when nothing is focused in the page
+        // also exits rather than getting lost inside the video.
+        setScreen('detail');
+      } else if (type === 'menu') {
+        // Menu returns to the detail screen too.
+        setScreen('detail');
+      }
+    }, [screen]),
+  );
+
+  // Discover the bridge on this PC via the reverse tunnel (fyaisa connect
+  // --lan exposes it on the Fire TV's own 127.0.0.1:47821). Tries once on
+  // launch and offers a Discover button in the pairing menu, so no IP typing.
+  const discoverBridge = useCallback(async () => {
+    const host = '127.0.0.1';
+    try {
+      setHubStatus('Looking for ElevSH on this PC…');
+      const res = await fetch(`http://${host}:${BRIDGE_PORT}/ping`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      console.info('[cinevega] discovered ElevSH on 127.0.0.1');
+      setPairHost(host);
+      setHubStatus(`ElevSH found at ${host}:${BRIDGE_PORT} — press Connect`);
+    } catch {
+      setHubStatus('No ElevSH found on this PC — run `fyaisa connect --lan`, or type the address below.');
+    }
+  }, []);
+
+  // Restore a previous pairing on launch; auto-discover if there's no saved
+  // pairing and no host typed yet.
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      const saved = await loadPair();
+      if (dead || saved) return;
+      // No saved pairing: try the reverse tunnel first, so the user never has
+      // to type an address when `fyaisa connect --lan` is running.
+      await discoverBridge();
+    })();
+    return () => {
+      dead = true;
+    };
+  }, [discoverBridge]);
 
   const verifyPair = useCallback(async (sp: SavedPair) => {
     if (!sp.token) return;
@@ -630,6 +697,7 @@ export const App = () => {
           updateVersion={updateVersion}
           job={job}
           onPair={() => startPair()}
+          onDiscover={discoverBridge}
           onForget={forget}
           onUpdate={updateViaPc}
           onDismiss={() => setMenu('hidden')}
@@ -1012,6 +1080,7 @@ type FyaisaMenuProps = {
   updateVersion: string | null;
   job: {status: string; log: string[]} | null;
   onPair: () => void;
+  onDiscover: () => void;
   onForget: () => void;
   onUpdate: () => void;
   onDismiss: () => void;
@@ -1028,6 +1097,7 @@ const FyaisaMenu = ({
   updateVersion,
   job,
   onPair,
+  onDiscover,
   onForget,
   onUpdate,
   onDismiss,
@@ -1060,6 +1130,11 @@ const FyaisaMenu = ({
           </View>
           <Text style={styles.menuHost}>{pairHost || '…'}</Text>
           {pairCode && <Text style={styles.menuCode}>Code: {pairCode}</Text>}
+          <Pressable style={menuFocus} onPress={onDiscover}>
+            <View style={styles.menuBtnGhost}>
+              <Text style={styles.menuBtnText}>Discover this PC</Text>
+            </View>
+          </Pressable>
           <Pressable hasTVPreferredFocus style={menuFocus} onPress={onPair}>
             <View style={styles.menuBtn}>
               <Text style={styles.menuBtnText}>

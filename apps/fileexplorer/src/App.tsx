@@ -274,38 +274,55 @@ const FilesApp = () => {
     (async () => {
       const saved = await loadPair();
       if (dead) return;
-      if (!saved) {
-        hideSplashScreenCallback();
+      if (saved) {
+        setHost(saved.host);
+        try {
+          await Fyaisa.from({host: saved.host, token: saved.token, appId: APP_ID}).catalog();
+          if (!dead) {
+            setPair(saved);
+            setPhase('browse');
+            setStatus('Connected');
+          }
+        } catch (e: any) {
+          if (e instanceof FyaisaError && e.status === 401) {
+            await clearPair();
+            if (!dead) {
+              setStatus('Pairing expired — pair again');
+            }
+          } else if (
+            e instanceof FyaisaError &&
+            (e.code === 'access_denied' || e.code === 'access_required')
+          ) {
+            if (!dead) {
+              setStatus(
+                e.code === 'access_denied'
+                  ? 'ElevSH access denied for this app — allow it in FYAISA → ElevSH'
+                  : 'ElevSH access not granted yet — allow this app in FYAISA → ElevSH',
+              );
+            }
+          } else if (!dead) {
+            setStatus(`Saved pairing for ${saved.host} — the PC looks offline right now`);
+          }
+        } finally {
+          if (!dead) {
+            hideSplashScreenCallback();
+          }
+        }
         return;
       }
-      setHost(saved.host);
+      // No saved pairing: try the reverse tunnel first (fyaisa connect --lan
+      // exposes the bridge on the Fire TV's own 127.0.0.1:47821), so the user
+      // never has to type an address when the bridge is running.
       try {
-        await Fyaisa.from({host: saved.host, token: saved.token, appId: APP_ID}).catalog();
-        if (!dead) {
-          setPair(saved);
-          setPhase('browse');
-          setStatus('Connected');
+        const res = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/ping`);
+        if (res.ok) {
+          console.info('[Files] discovered ElevSH on 127.0.0.1');
+          setHost('127.0.0.1');
+          setStatus('ElevSH found on this PC — press Connect');
         }
-      } catch (e: any) {
-        if (e instanceof FyaisaError && e.status === 401) {
-          await clearPair();
-          if (!dead) {
-            setStatus('Pairing expired — pair again');
-          }
-        } else if (
-          e instanceof FyaisaError &&
-          (e.code === 'access_denied' || e.code === 'access_required')
-        ) {
-          if (!dead) {
-            setStatus(
-              e.code === 'access_denied'
-                ? 'ElevSH access denied for this app — allow it in FYAISA → ElevSH'
-                : 'ElevSH access not granted yet — allow this app in FYAISA → ElevSH',
-            );
-          }
-        } else if (!dead) {
-          setStatus(`Saved pairing for ${saved.host} — the PC looks offline right now`);
-        }
+      } catch {
+        // Bridge not on loopback; the manual keypad is the fallback.
+        setStatus('Not connected');
       } finally {
         if (!dead) {
           hideSplashScreenCallback();
@@ -392,6 +409,23 @@ const FilesApp = () => {
       setBusy(false);
     }
   }, [host]);
+
+  // Discover the bridge on this PC via the reverse tunnel (fyaisa connect
+  // --lan exposes it on the Fire TV's own 127.0.0.1:47821).
+  const discoverBridge = useCallback(async () => {
+    try {
+      setStatus('Looking for ElevSH on this PC…');
+      const res = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/ping`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      console.info('[Files] discovered ElevSH on 127.0.0.1');
+      setHost('127.0.0.1');
+      setStatus('ElevSH found on this PC — press Connect');
+    } catch {
+      setStatus('No ElevSH found on this PC — run `fyaisa connect --lan`, or type the address below.');
+    }
+  }, []);
 
   const openEntry = useCallback(
     async (e: Entry) => {
@@ -510,6 +544,9 @@ const FilesApp = () => {
               ))}
             </View>
           </View>
+          <Pressable style={focusable(styles.connectBtn)} onPress={discoverBridge} disabled={busy}>
+            <Text style={styles.backText}>Discover this PC</Text>
+          </Pressable>
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Step 3 — connect</Text>
