@@ -18,8 +18,8 @@ import * as React from 'react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import {KeplerFileSystem} from '@amazon-devices/kepler-file-system';
 
-export type BackgroundEffect = 'none' | 'aurora' | 'waves' | 'sweep';
-export type ButtonEffect = 'flat' | 'glow' | 'outline';
+export type BackgroundEffect = 'none' | 'aurora' | 'waves' | 'sweep' | 'grid' | 'matrix-rain';
+export type ButtonEffect = 'flat' | 'glow' | 'outline' | 'neon-glow' | 'pulse';
 export type WaveEnergy = 'calm' | 'normal' | 'party';
 
 /** The colours a preset or a user actually picks. */
@@ -344,6 +344,98 @@ export const PRESETS: Record<string, Theme> = {
     },
     {buttonEffect: 'outline', background: 'none', energy: 'normal'},
   ),
+
+  // ------- additional presets -------
+
+  cyberpunk: preset(
+    'cyberpunk',
+    'Cyberpunk',
+    {
+      bg: '#05050a',
+      surface: '#0f0f1a',
+      text: '#00ff41',
+      textDim: '#66ff99',
+      textMuted: '#336644',
+      accent: '#ff00ff',
+      focus: '#00ffff',
+      danger: '#ff0040',
+      success: '#00ff41',
+      warn: '#ffff00',
+    },
+    {buttonEffect: 'neon-glow', background: 'grid', energy: 'party'},
+  ),
+
+  matrix: preset(
+    'matrix',
+    'Matrix',
+    {
+      bg: '#000000',
+      surface: '#0a0a0a',
+      text: '#00ff00',
+      textDim: '#33ff33',
+      textMuted: '#1a4d1a',
+      accent: '#00cc00',
+      focus: '#33ff33',
+      danger: '#ff0000',
+      success: '#00ff00',
+      warn: '#ffff00',
+    },
+    {buttonEffect: 'flat', background: 'matrix-rain', energy: 'normal'},
+  ),
+
+  vaporwave: preset(
+    'vaporwave',
+    'Vaporwave',
+    {
+      bg: '#1a0033',
+      surface: '#2a104a',
+      text: '#ffd1ff',
+      textDim: '#c080ff',
+      textMuted: '#7040a0',
+      accent: '#ff0080',
+      focus: '#00ffff',
+      danger: '#ff66ff',
+      success: '#00ffff',
+      warn: '#ffcc00',
+    },
+    {buttonEffect: 'glow', background: 'sweep', energy: 'calm'},
+  ),
+
+  retro: preset(
+    'retro',
+    'Retro Terminal',
+    {
+      bg: '#1a1a1a',
+      surface: '#252525',
+      text: '#ccffcc',
+      textDim: '#99cc99',
+      textMuted: '#669966',
+      accent: '#ffcc00',
+      focus: '#ffff00',
+      danger: '#ff6666',
+      success: '#66ff66',
+      warn: '#ffcc66',
+    },
+    {buttonEffect: 'outline', background: 'none', energy: 'calm'},
+  ),
+
+  highcontrast: preset(
+    'highcontrast',
+    'High Contrast',
+    {
+      bg: '#000000',
+      surface: '#000000',
+      text: '#ffffff',
+      textDim: '#cccccc',
+      textMuted: '#999999',
+      accent: '#ffff00',
+      focus: '#00ffff',
+      danger: '#ff0000',
+      success: '#00ff00',
+      warn: '#ffff00',
+    },
+    {buttonEffect: 'outline', background: 'none', energy: 'calm'},
+  ),
 };
 
 export const PRESET_LIST: Theme[] = [
@@ -355,6 +447,11 @@ export const PRESET_LIST: Theme[] = [
   PRESETS.sunset,
   PRESETS.ocean,
   PRESETS.daylight,
+  PRESETS.cyberpunk,
+  PRESETS.matrix,
+  PRESETS.vaporwave,
+  PRESETS.retro,
+  PRESETS.highcontrast,
 ];
 
 export const DEFAULT_THEME: Theme = PRESETS.classic;
@@ -364,12 +461,14 @@ export const DEFAULT_THEME: Theme = PRESETS.classic;
  * ------------------------------------------------------------------------- */
 export const ACCENT_SWATCHES = [
   '#165a8c', '#3d7bff', '#00acc1', '#00bfa5', '#2e9e4f', '#43a047',
-  '#ffb02e', '#f4511e', '#e50914', '#ff2e97', '#7c4dff', '#c6ff00', RAINBOW,
+  '#ffb02e', '#f4511e', '#e50914', '#ff2e97', '#7c4dff', '#c6ff00',
+  '#00ff41', '#00ffff', '#ffff00', '#ff00ff', '#ccffcc', RAINBOW,
 ];
 
 export const BG_SWATCHES = [
   '#0b0b0f', '#000000', '#12161c', '#14082a', '#0c140f', '#1a0f0b',
-  '#07161c', '#1c1c22', '#241d33', '#0f1a2b', '#eef1f6', '#f5f0e8', RAINBOW,
+  '#07161c', '#1c1c22', '#241d33', '#0f1a2b', '#eef1f6', '#f5f0e8',
+  '#05050a', '#1a1a1a', '#1a0033', RAINBOW,
 ];
 
 export const SURFACE_SWATCHES = [
@@ -386,6 +485,8 @@ export const BUTTON_EFFECTS: {id: ButtonEffect; label: string}[] = [
   {id: 'flat', label: 'Flat'},
   {id: 'glow', label: 'Glow'},
   {id: 'outline', label: 'Outline'},
+  {id: 'neon-glow', label: 'Neon Glow'},
+  {id: 'pulse', label: 'Pulse'},
 ];
 
 export const BACKGROUNDS: {id: BackgroundEffect; label: string}[] = [
@@ -393,6 +494,8 @@ export const BACKGROUNDS: {id: BackgroundEffect; label: string}[] = [
   {id: 'aurora', label: 'Aurora'},
   {id: 'waves', label: 'Waves'},
   {id: 'sweep', label: 'Sweep'},
+  {id: 'grid', label: 'Grid'},
+  {id: 'matrix-rain', label: 'Matrix Rain'},
 ];
 
 export const ENERGIES: {id: WaveEnergy; label: string}[] = [
@@ -407,9 +510,9 @@ export const ENERGIES: {id: WaveEnergy; label: string}[] = [
 const THEME_PATH = '/data/theme.json';
 
 const isButtonEffect = (v: any): v is ButtonEffect =>
-  v === 'flat' || v === 'glow' || v === 'outline';
+  v === 'flat' || v === 'glow' || v === 'outline' || v === 'neon-glow' || v === 'pulse';
 const isBackground = (v: any): v is BackgroundEffect =>
-  v === 'none' || v === 'aurora' || v === 'waves' || v === 'sweep';
+  v === 'none' || v === 'aurora' || v === 'waves' || v === 'sweep' || v === 'grid' || v === 'matrix-rain';
 const isEnergy = (v: any): v is WaveEnergy =>
   v === 'calm' || v === 'normal' || v === 'party';
 

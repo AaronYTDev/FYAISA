@@ -1,12 +1,14 @@
 /**
  * Ambient background for the hub.
  *
- * Three effects, all built from plain animated Views (transforms + opacity, so
+ * Six effects, all built from plain animated Views (transforms + opacity, so
  * they run on the native driver and cost almost nothing on a Fire TV Stick):
  *
  *   aurora — three big soft blobs drifting and breathing
  *   waves  — wide translucent ribbons sweeping side to side (PS4-store-ish)
  *   sweep  — a single light bar trailing diagonally across the screen
+ *   grid   — a subtle glowing grid that breathes with the theme accent
+ *   matrix-rain — falling green characters on dark (Matrix preset)
  *
  * It sits behind everything and never takes input. The animation speed is set
  * by the theme's "energy" (calm / normal / party). When the theme's background
@@ -178,6 +180,111 @@ const Aurora = ({
   );
 };
 
+const GRID_COLUMNS = 6;
+const GRID_ROWS = 5;
+const GRID_CHARS =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*';
+
+const Grid = ({
+  driver,
+  accent,
+}: {
+  driver: Animated.Value;
+  accent: string;
+}) => {
+  // A grid of cells whose border color pulses between the surface and accent.
+  const cells: JSX.Element[] = [];
+  const cellW = 160;
+  const cellH = 140;
+  for (let r = 0; r < GRID_ROWS; r++) {
+    for (let c = 0; c < GRID_COLUMNS; c++) {
+      const pulse = driver.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [0, 1, 0],
+      });
+      cells.push(
+        <Animated.View
+          key={`grid-${r}-${c}`}
+          style={
+            {
+              position: 'absolute',
+              left: c * cellW,
+              top: r * cellH,
+              width: cellW - 4,
+              height: cellH - 4,
+              borderWidth: 1,
+              borderColor: accent,
+              opacity: pulse.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.04, 0.18],
+              }),
+            } as any
+          }
+        />
+      );
+    }
+  }
+  return <>{cells}</>;
+};
+
+const MatrixRain = ({
+  driver,
+  accent,
+}: {
+  driver: Animated.Value;
+  accent: string;
+}) => {
+  // Falling columns of characters, Matrix style. Each column is a small set of
+  // labels that move down and reset, coloured by the theme accent.
+  const columns = 10;
+  const charsPerCol = 6;
+  const items: JSX.Element[] = [];
+  for (let c = 0; c < columns; c++) {
+    for (let r = 0; r < charsPerCol; r++) {
+      const ch = GRID_CHARS[Math.floor(Math.random() * GRID_CHARS.length)];
+      const colValue = driver.interpolate({
+        inputRange: [0, 1],
+        outputRange: [c * 0.09, c * 0.09 + 0.5],
+      });
+      const fall = Animated.loop(
+        Animated.sequence([
+          Animated.timing(colValue, {
+            toValue: 1 + c * 0.09,
+            duration: 1200 + c * 200,
+            easing: Easing.linear,
+            useNativeDriver: true,
+          }),
+          Animated.timing(colValue, {
+            toValue: c * 0.09 - 0.6,
+            duration: 0,
+            easing: Easing.linear,
+            useNativeDriver: true,
+          }),
+        ]),
+      );
+      items.push(
+        <Animated.Text
+          key={`matrix-${c}-${r}`}
+          style={
+            {
+              position: 'absolute',
+              left: c * 44,
+              top: 0,
+              color: accent,
+              fontSize: 18,
+              opacity: 0.85,
+              transform: [{translateY: fall}],
+            } as any
+          }>
+          {ch}
+        </Animated.Text>
+      );
+      fall.start();
+    }
+  }
+  return <>{items}</>;
+};
+
 const Sweep = ({driver, accent}: {driver: Animated.Value; accent: string}) => (
   <Animated.View
     style={
@@ -223,6 +330,10 @@ export const Backdrop = () => {
         <Aurora drivers={drivers} accent={resolved.accent} focus={resolved.focus} link={resolved.link} />
       ) : null}
       {resolved.background === 'sweep' ? <Sweep driver={drivers[0]} accent={resolved.accent} /> : null}
+      {resolved.background === 'grid' ? <Grid driver={drivers[0]} accent={resolved.accent} /> : null}
+      {resolved.background === 'matrix-rain' ? (
+        <MatrixRain driver={drivers[0]} accent={resolved.accent} />
+      ) : null}
     </View>
   );
 };

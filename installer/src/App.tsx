@@ -9,7 +9,9 @@ import * as React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
   BackHandler,
+  Easing,
   Image,
   ScrollView,
   StyleSheet,
@@ -342,8 +344,20 @@ const describePc = async (fy: Fyaisa): Promise<string> => {
  */
 const useFocusable = () => {
   const {styles} = useAppTheme();
+  // Press feedback: buttons scale down slightly when pressed, giving tactile
+  // confirmation on a remote with no haptics.
+  const pressScale = useRef(new Animated.Value(1)).current;
   return useCallback(
-    (base: any) => ({focused}: {focused: boolean}) => [base, focused && styles.focused],
+    (base: any) => ({
+      focused,
+      pressed,
+    }: {focused: boolean; pressed: boolean}) => [
+      base,
+      focused && styles.focused,
+      pressed && {
+        transform: [{scale: pressScale.interpolate({inputRange: [0, 1], outputRange: [1, 0.95]})}],
+      },
+    ],
     [styles],
   );
 };
@@ -355,6 +369,59 @@ const Hub = () => {
   const hideSplashScreenCallback = useHideSplashScreenCallback();
 
   const [catalog, setCatalog] = useState<Catalog | null>(null);
+
+  // Crossfade between screens so switching menus feels smooth instead of abrupt.
+  const pageOpacity = useRef(new Animated.Value(1)).current;
+  const screenKeyRef = useRef<string | null>(null);
+  const [pageKey, setPageKey] = useState(0);
+
+  // Focus ring pulse for the currently focused control.
+  const focusPulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(focusPulse, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(focusPulse, {
+          toValue: 0,
+          duration: 1400,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    ).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When the screen changes, crossfade out and back in.
+  useEffect(() => {
+    const key = selectedId ?? 'root';
+    if (screenKeyRef.current !== null && screenKeyRef.current !== key) {
+      Animated.sequence([
+        Animated.timing(pageOpacity, {
+          toValue: 0,
+          duration: 120,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pageOpacity, {
+          toValue: 1,
+          duration: 200,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      setPageKey(k => k + 1);
+    }
+    screenKeyRef.current = key;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, pageOpacity]);
+
+  const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // The launch intro owns the screen first; true for the rest of the session
@@ -1468,37 +1535,47 @@ const Hub = () => {
       },
     ];
     return (
-      <View style={styles.wrap}>
+      <Animated.View style={[styles.wrap, {opacity: pageOpacity}]}>
         <View style={styles.header}>
           <Text style={styles.brand}>{catalog?.hub?.name ?? 'FYAISA'}</Text>
           {catalog?.hub?.tagline ? <Text style={styles.tagline}>{catalog.hub.tagline}</Text> : null}
         </View>
         <ScrollView contentContainerStyle={styles.list}>
-          {submenus.map((m, i) => (
-            <Pressable
-              key={m.id}
-              hasTVPreferredFocus={i === 0}
-              focusable
-              style={({focused}) => [styles.row, focused && styles.rowFocused, focused && styles.focused]}
-              onPress={() => setSelectedId(m.id)}>
-              <View style={styles.rowMain}>
-                <Text style={styles.rowTitle}>{m.title}</Text>
-                <Text style={styles.rowSummary} numberOfLines={2}>
-                  {m.summary}
-                </Text>
-              </View>
-              <Text style={styles.chevron}>›</Text>
-            </Pressable>
-          ))}
+          {submenus.map((m, i) => {
+            const [menuPressed, setMenuPressed] = React.useState(false);
+            return (
+              <Pressable
+                key={m.id}
+                hasTVPreferredFocus={i === 0}
+                focusable
+                style={({focused}) => [
+                  styles.row,
+                  focused && styles.rowFocused,
+                  focused && styles.focused,
+                  menuPressed && {transform: [{scale: 0.96}]},
+                ]}
+                onPressIn={() => setMenuPressed(true)}
+                onPressOut={() => setMenuPressed(false)}
+                onPress={() => setSelectedId(m.id)}>
+                <View style={styles.rowMain}>
+                  <Text style={styles.rowTitle}>{m.title}</Text>
+                  <Text style={styles.rowSummary} numberOfLines={2}>
+                    {m.summary}
+                  </Text>
+                </View>
+                <Text style={styles.chevron}>›</Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
-      </View>
+      </Animated.View>
     );
   }
 
   // Connect screen.
   if (selectedId === '__connect__') {
     return (
-      <View style={styles.wrap}>
+      <Animated.View style={[styles.wrap, {opacity: pageOpacity}]}>
         <ScrollView contentContainerStyle={styles.list}>
           <Text style={styles.brand}>ElevSH</Text>
           <Text style={styles.tagline}>
@@ -1724,7 +1801,7 @@ const Hub = () => {
             <Text style={styles.backText}>Back</Text>
           </Pressable>
         </ScrollView>
-      </View>
+      </Animated.View>
     );
   }
 
@@ -2486,9 +2563,12 @@ const Hub = () => {
       ) : null}
 
       {catalog == null ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={theme.palette.text} />
-          <Text style={styles.dim}>Loading catalog…</Text>
+        <View style={styles.loadingCard}>
+          <ActivityIndicator size="large" color={theme.palette.text} style={{marginBottom: 12}} />
+          <Text style={styles.emptyTitle}>Loading catalog…</Text>
+          <Text style={styles.emptyBody}>
+            Fetching the app list from GitHub. This only happens once per launch.
+          </Text>
         </View>
       ) : (
         <ScrollView contentContainerStyle={styles.list}>
@@ -2500,10 +2580,18 @@ const Hub = () => {
           {loading ? <Text style={styles.dim}>Refreshing catalog…</Text> : null}
 
           {apps.length === 0 ? (
-            <Text style={styles.dim}>No apps in the catalog yet.</Text>
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyIcon}>📦</Text>
+              <Text style={styles.emptyTitle}>No apps in the catalog yet.</Text>
+              <Text style={styles.emptyBody}>
+                The hub catalog is empty. Check your network connection and
+                pull-to-refresh, or add apps via the FYAISA repo.
+              </Text>
+            </View>
           ) : filteredApps.length === 0 ? (
-            <View>
-              <Text style={styles.dim}>No apps match "{query}".</Text>
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyIcon}>🔍</Text>
+              <Text style={styles.emptyTitle}>No apps match "{query}".</Text>
               <Pressable
                 focusable
                 style={({focused}) => [styles.refreshBtn, focused && styles.focused]}
@@ -2857,6 +2945,37 @@ const makeStyles = (t: ResolvedTheme) => {
     marginTop: 18,
   },
   cardTitle: {color: t.text, fontSize: 19, fontWeight: '600', marginBottom: 10},
+  // Empty state cards: centred, icon + message, used when there's nothing to show.
+  emptyCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    paddingHorizontal: 40,
+    marginTop: 30,
+  },
+  emptyIcon: {
+    fontSize: 56,
+    marginBottom: 14,
+  },
+  emptyTitle: {
+    color: t.text,
+    fontSize: 24,
+    fontWeight: '700',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  emptyBody: {
+    color: t.textDim,
+    fontSize: 17,
+    textAlign: 'center',
+    lineHeight: 24,
+    maxWidth: 420,
+  },
+  loadingCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
   statusLine: {color: t.textSoft, fontSize: 15, marginBottom: 10},
   pcInfo: {color: t.code, fontSize: 14, marginBottom: 10},
   keypad: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12},
@@ -3032,12 +3151,22 @@ const makeStyles = (t: ResolvedTheme) => {
   focused: {
     borderWidth: 4,
     borderColor: t.focus,
+    // Animated pulse: ring breathes between surface and focus colour.
+    ...(focusPulse && {
+      borderColor: focusPulse.interpolate({
+        inputRange: [0, 1],
+        outputRange: [t.surface, t.focus],
+      }),
+    }),
     // "Flat" keeps a crisp ring; "glow" and "outline" add the halo.
     ...(t.buttonEffect === 'flat'
       ? {}
       : {
           shadowColor: t.focus,
-          shadowOpacity: 0.85,
+          shadowOpacity: focusPulse.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.35, 0.85],
+          }),
           shadowRadius: 10,
           shadowOffset: {width: 0, height: 0},
           elevation: 10,
