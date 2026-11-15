@@ -80,6 +80,34 @@ const clientIp = (req) => String(req.socket.remoteAddress || '').replace(/^::fff
 const pairings = new Map(); // code -> {expires, approved}
 const jobs = new Map(); // id -> {id, appId, status, log, createdAt}
 
+// Job TTL: completed/errored jobs are kept for 30 minutes so the TV can poll
+// the build log, then reaped so the Map doesn't grow unbounded.
+const JOB_TTL_MS = 30 * 60 * 1000;
+function cleanupJobs() {
+  const now = Date.now();
+  for (const [id, job] of jobs) {
+    if (
+      (job.status === 'done' || job.status === 'error') &&
+      now - job.createdAt > JOB_TTL_MS
+    ) {
+      jobs.delete(id);
+    }
+  }
+}
+// Reap stale jobs every 5 minutes.
+setInterval(cleanupJobs, 5 * 60 * 1000);
+
+// Pairing codes expire after PAIR_TTL_MS; clean them aggressively so expired
+// codes don't linger in the Map until the next /pair/status poll.
+function cleanupPairings() {
+  const now = Date.now();
+  for (const [code, entry] of pairings) {
+    if (now > entry.expires) pairings.delete(code);
+  }
+}
+// Reap expired pairings every minute.
+setInterval(cleanupPairings, 60 * 1000);
+
 function log(...a) {
   const ts = new Date().toISOString().slice(11, 19);
   console.log(`[bridge ${ts}]`, ...a);
@@ -105,7 +133,12 @@ function readCatalog() {
 // Fetch the catalog from GitHub (fallback when local is stale/missing)
 async function fetchRemoteCatalog() {
   try {
-    const res = await fetch('https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    const res = await fetch('https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json', {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } catch (e) {
@@ -149,7 +182,7 @@ function compareVersions(a, b) {
 // ---------------------------------------------------------------------------
 // Install pipeline (delegates to the same steps as `fyaisa install`)
 // ---------------------------------------------------------------------------
-function run(cmd, args, cwd, onLog) {
+function run(cmd, args, cwd, onLog, timeoutMs = 0) {
   return new Promise((resolve) => {
     const p = spawn(cmd, args, { cwd, env: process.env });
     onLog(`$ ${cmd} ${args.join(' ')}`);
@@ -159,11 +192,24 @@ function run(cmd, args, cwd, onLog) {
     };
     p.stdout.on('data', capture);
     p.stderr.on('data', capture);
+    let timer = null;
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        onLog(`timeout after ${timeoutMs}ms — killing ${cmd}`);
+        try {
+          p.kill('SIGKILL');
+        } catch {}
+      }, timeoutMs);
+    }
     p.on('error', (e) => {
+      if (timer) clearTimeout(timer);
       onLog(`spawn error: ${e.message}`);
       resolve(127);
     });
-    p.on('close', (code) => resolve(code === null ? 1 : code));
+    p.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      resolve(code === null ? 1 : code);
+    });
   });
 }
 
@@ -261,8 +307,12 @@ async function installApp(appId, job, opts = {}) {
   // requesting TV first; best-effort, since the link may already be up.
   if (opts.deviceIp) {
     job.log.push(`Ensuring vda is connected to ${opts.deviceIp}:5555…`);
-    await run('vega', ['exec', 'vda', 'connect', `${opts.deviceIp}:5555`], HOST_DIR, (l) =>
-      job.log.push(l),
+    await run(
+      'vega',
+      ['exec', 'vda', 'connect', `${opts.deviceIp}:5555`],
+      HOST_DIR,
+      (l) => job.log.push(l),
+      30000, // 30 s — vda connect should be quick
     );
   }
 
@@ -371,14 +421,26 @@ async function installApp(appId, job, opts = {}) {
   if (!patch) job.log.push(`Building ${app.name} (${appId})…`);
   if (!fs.existsSync(path.join(buildDir, 'node_modules'))) {
     if (patch) job.log.push('Installing dependencies in the patch build dir…');
-    const rc = await run('npm', ['install', '--no-audit', '--no-fund'], buildDir, (l) => job.log.push(l));
+    const rc = await run(
+      'npm',
+      ['install', '--no-audit', '--no-fund'],
+      buildDir,
+      (l) => job.log.push(l),
+      300000, // 5 min — dependency install can be slow on first run
+    );
     if (rc !== 0) {
       job.status = 'error';
       job.log.push('npm install failed');
       return;
     }
   }
-  const brc = await run('npm', ['run', 'build:release'], buildDir, (l) => job.log.push(l));
+  const brc = await run(
+    'npm',
+    ['run', 'build:release'],
+    buildDir,
+    (l) => job.log.push(l),
+    600000, // 10 min — Vega builds can be slow on larger apps
+  );
   if (brc !== 0) {
     job.status = 'error';
     job.log.push(patch ? 'patch build failed' : 'build failed');
@@ -391,8 +453,12 @@ async function installApp(appId, job, opts = {}) {
     // the original is still there. Uninstalling is best-effort; a
     // system-protected original may refuse, in which case we install over it.
     job.log.push(`Removing the original ${patch.id}…`);
-    const urc = await run('vega', ['device', 'uninstall-app', '--appName', patch.id], HOST_DIR, (l) =>
-      job.log.push(l),
+    const urc = await run(
+      'vega',
+      ['device', 'uninstall-app', '--appName', patch.id],
+      HOST_DIR,
+      (l) => job.log.push(l),
+      60000, // 1 min — uninstall should be quick
     );
     if (urc !== 0) {
       job.log.push(`Note: could not remove the original (exit ${urc}) — it may be system-protected; installing over it.`);
@@ -401,8 +467,12 @@ async function installApp(appId, job, opts = {}) {
     }
   }
   job.log.push('Installing on the connected Fire TV…');
-  const irc = await run('vega', ['device', 'install-app', '--dir', '.', '-b', 'Release'], buildDir, (l) =>
-    job.log.push(l),
+  const irc = await run(
+    'vega',
+    ['device', 'install-app', '--dir', '.', '-b', 'Release'],
+    buildDir,
+    (l) => job.log.push(l),
+    120000, // 2 min — package install should be quick once built
   );
   if (irc !== 0) {
     job.status = 'error';

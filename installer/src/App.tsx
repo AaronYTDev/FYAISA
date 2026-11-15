@@ -632,6 +632,17 @@ const Hub = () => {
     }
   }, [pair.status, bridgeFetch]);
 
+  // Adaptive polling: poll every 30s right after a pairing/install/remove
+  // (when state is changing), otherwise every 2 minutes when idle. This avoids
+  // hammering the bridge with vega calls when nothing is happening on the couch.
+  const activePollingRef = useRef(false);
+  const bumpActivity = useCallback(() => {
+    activePollingRef.current = true;
+    setTimeout(() => {
+      activePollingRef.current = false;
+    }, 60000); // stay "active" for 60s after any user action
+  }, []);
+
   useEffect(() => {
     // A fresh pairing (or a reconnect) has read nothing yet, so hold the buttons
     // on "Syncing…" until the installed list and versions come back.
@@ -641,8 +652,22 @@ const Hub = () => {
       return;
     }
     refreshInstalled();
-    const iv = setInterval(refreshInstalled, 30000);
-    return () => clearInterval(iv);
+    let intervalId: ReturnType<typeof setInterval>;
+    const schedule = () => {
+      if (intervalId) clearInterval(intervalId);
+      intervalId = setInterval(() => {
+        refreshInstalled();
+      }, activePollingRef.current ? 30000 : 120000);
+    };
+    schedule();
+    // Reschedule whenever activity changes.
+    const activityWatcher = setInterval(() => {
+      schedule();
+    }, 60000);
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+      clearInterval(activityWatcher);
+    };
   }, [pair.status, refreshInstalled]);
 
   /**
@@ -858,6 +883,7 @@ const Hub = () => {
    */
   const requestInstall = useCallback(
     async (appId: string) => {
+      bumpActivity();
       try {
         const {jobId} = await bridgeFetch('/install', {
           method: 'POST',
@@ -907,6 +933,7 @@ const Hub = () => {
       }));
       return;
     }
+    bumpActivity();
     if (updateAll || !updatable.length) {
       return;
     }
@@ -990,6 +1017,7 @@ const Hub = () => {
         return;
       }
       setUninstallArm(null);
+      bumpActivity();
       setAppBusy(`Removing ${appId}…`);
       setAppNote(null);
       try {
@@ -1264,6 +1292,7 @@ const Hub = () => {
     }
     setDebloatArmed(false);
     setDebloatBusy(true);
+    bumpActivity();
     const removed: string[] = [];
     const failed: string[] = [];
     for (const id of ids) {
@@ -1366,7 +1395,12 @@ const Hub = () => {
     loadCatalog();
     // Re-read the catalog on its own so apps added to (or removed from) the
     // repo show up here without a hub update or a manual Refresh.
-    const iv = setInterval(() => loadCatalog(true), 5 * 60 * 1000);
+    // Re-read the catalog on its own so apps added to (or removed from) the
+    // repo show up here without a hub update or a manual Refresh. Background
+    // refetch is infrequent (10 min); the explicit Refresh button and app
+    // launch do full fetches, so the couch experience stays snappy without
+    // hammering GitHub.
+    const iv = setInterval(() => loadCatalog(true), 10 * 60 * 1000);
     return () => clearInterval(iv);
   }, [loadCatalog]);
 

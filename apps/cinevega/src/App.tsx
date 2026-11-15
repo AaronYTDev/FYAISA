@@ -46,6 +46,57 @@ const HUB_CATALOG_URL =
 const STORE_PATH = '/data/bridge.json';
 const APP_VERSION = '1.0.0';
 
+// --- TMDB cache ---------------------------------------------------------------
+// TMDB responses are cached to this app's private /data so the home screen
+// loads instantly on relaunch and keeps working when the stick is offline or
+// TMDB is slow. Each endpoint is stored as {expiresAt, data} keyed by a
+// sanitized URL. TTLs: popular/trending 1 h, details 1 h, search 5 min.
+const CACHE_DIR = '/data/cinevega-tmdb-cache';
+const CACHE_TTL = {
+  list: 60 * 60 * 1000,   // 1 h for trending / popular movies / popular TV
+  detail: 60 * 60 * 1000, // 1 h for movie/TV details + seasons/episodes
+  search: 5 * 60 * 1000,  // 5 min for search results
+};
+const cacheKey = (url: string) =>
+  url.replace(/[^A-Za-z0-9]/g, '_').slice(0, 120);
+
+const cacheGet = async (key: string): Promise<any | null> => {
+  try {
+    const file = `${CACHE_DIR}/${cacheKey(key)}.json`;
+    if (!(await KeplerFileSystem.exists(file))) return null;
+    const raw = await KeplerFileSystem.readFileAsString(file, 'UTF-8');
+    const entry = JSON.parse(raw);
+    if (entry.expiresAt && Date.now() < entry.expiresAt) return entry.data;
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const cacheSet = async (key: string, data: any, ttlMs: number) => {
+  try {
+    const file = `${CACHE_DIR}/${cacheKey(key)}.json`;
+    await KeplerFileSystem.writeStringToFile(
+      file,
+      JSON.stringify({expiresAt: Date.now() + ttlMs, data}),
+      'UTF-8',
+    );
+  } catch {
+    // Cache write failures (e.g. cache dir not creatable) are non-fatal;
+    // the app falls back to a live TMDB fetch.
+  }
+};
+
+const fetchCached = async (url: string, ttlMs: number): Promise<any> => {
+  const cached = await cacheGet(url);
+  if (cached) return cached;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  await cacheSet(url, data, ttlMs);
+  return data;
+};
+
 // --- Types -------------------------------------------------------------------
 type MediaItem = {
   id: number;
@@ -81,10 +132,10 @@ type Season = {
 // --- TMDB API ----------------------------------------------------------------
 const tmdb = {
   async trending(): Promise<MediaItem[]> {
-    const res = await fetch(
+    const data = await fetchCached(
       `${TMDB_BASE}/trending/all/week?api_key=${TMDB_API_KEY}`,
+      CACHE_TTL.list,
     );
-    const data = await res.json();
     return (data.results || []).map((item: any) => ({
       id: item.id,
       title: item.title || item.name || '',
@@ -103,10 +154,10 @@ const tmdb = {
   },
 
   async popularMovies(): Promise<MediaItem[]> {
-    const res = await fetch(
+    const data = await fetchCached(
       `${TMDB_BASE}/movie/popular?api_key=${TMDB_API_KEY}`,
+      CACHE_TTL.list,
     );
-    const data = await res.json();
     return (data.results || []).map((item: any) => ({
       id: item.id,
       title: item.title || '',
@@ -121,8 +172,10 @@ const tmdb = {
   },
 
   async popularTV(): Promise<MediaItem[]> {
-    const res = await fetch(`${TMDB_BASE}/tv/popular?api_key=${TMDB_API_KEY}`);
-    const data = await res.json();
+    const data = await fetchCached(
+      `${TMDB_BASE}/tv/popular?api_key=${TMDB_API_KEY}`,
+      CACHE_TTL.list,
+    );
     return (data.results || []).map((item: any) => ({
       id: item.id,
       title: item.name || '',
@@ -139,10 +192,10 @@ const tmdb = {
   },
 
   async search(query: string): Promise<MediaItem[]> {
-    const res = await fetch(
+    const data = await fetchCached(
       `${TMDB_BASE}/search/multi?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}`,
+      CACHE_TTL.search,
     );
-    const data = await res.json();
     return (data.results || [])
       .filter((item: any) => item.media_type === 'movie' || item.media_type === 'tv')
       .map((item: any) => ({
@@ -161,10 +214,10 @@ const tmdb = {
   },
 
   async movieDetails(id: number): Promise<MediaItem> {
-    const res = await fetch(
+    const item = await fetchCached(
       `${TMDB_BASE}/movie/${id}?api_key=${TMDB_API_KEY}`,
+      CACHE_TTL.detail,
     );
-    const item = await res.json();
     return {
       id: item.id,
       title: item.title || '',
@@ -179,8 +232,10 @@ const tmdb = {
   },
 
   async tvDetails(id: number): Promise<MediaItem> {
-    const res = await fetch(`${TMDB_BASE}/tv/${id}?api_key=${TMDB_API_KEY}`);
-    const item = await res.json();
+    const item = await fetchCached(
+      `${TMDB_BASE}/tv/${id}?api_key=${TMDB_API_KEY}`,
+      CACHE_TTL.detail,
+    );
     return {
       id: item.id,
       title: item.name || '',
@@ -197,8 +252,10 @@ const tmdb = {
   },
 
   async tvSeasons(id: number): Promise<Season[]> {
-    const res = await fetch(`${TMDB_BASE}/tv/${id}?api_key=${TMDB_API_KEY}`);
-    const data = await res.json();
+    const data = await fetchCached(
+      `${TMDB_BASE}/tv/${id}?api_key=${TMDB_API_KEY}`,
+      CACHE_TTL.detail,
+    );
     return (data.seasons || [])
       .filter((s: any) => s.season_number > 0)
       .map((s: any) => ({
@@ -208,10 +265,10 @@ const tmdb = {
   },
 
   async seasonEpisodes(tvId: number, seasonNumber: number): Promise<Episode[]> {
-    const res = await fetch(
+    const data = await fetchCached(
       `${TMDB_BASE}/tv/${tvId}/season/${seasonNumber}?api_key=${TMDB_API_KEY}`,
+      CACHE_TTL.detail,
     );
-    const data = await res.json();
     return (data.episodes || []).map((ep: any) => ({
       id: ep.id,
       season_number: ep.season_number,

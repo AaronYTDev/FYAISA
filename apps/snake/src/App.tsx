@@ -420,14 +420,17 @@ const CONTROL_PROBE = `
       var done = 0;
       var failed = 0;
       var idx = 0;
+      // Cap total URLs and batch size so a heavy page can't flood the TV's
+      // connection with hundreds of parallel fetches.
+      var maxUrls = Math.min(urls.length, 50);
       function pump() {
-        if (idx >= urls.length) {
+        if (idx >= maxUrls) {
           tell('warm: ' + done + ' ok, ' + failed + ' failed of ' +
-               urls.length);
+               maxUrls + (urls.length > maxUrls ? ' (capped)' : ''));
           return;
         }
-        var batch = urls.slice(idx, idx + 12);
-        idx += 12;
+        var batch = urls.slice(idx, idx + 8);
+        idx += 8;
         Promise.all(batch.map(function (u) {
           return fetch(u, {cache: 'force-cache', mode: 'no-cors'}).then(
             function () { done++; },
