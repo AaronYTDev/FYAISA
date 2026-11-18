@@ -2,7 +2,7 @@ schema-version = 1
 
 [package]
 title = "VegaTube"
-version = "1.3.1"
+version = "1.3.2"
 id = "app.vegatube"
 icon = "@image/vegatube.png"
 
@@ -16,9 +16,6 @@ min = "1.2"
 target = "1.2"
 
 [needs]
-[[needs.module]]
-id = "/com.amazon.vega.os@IVega_1_2"
-
 [[needs.module]]
 id = "/com.amazon.kepler.keplerscript_4@IKeplerScript_0"
 

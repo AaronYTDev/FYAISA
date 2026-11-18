@@ -28,7 +28,9 @@ import {
 import {
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
+  useTVEventHandler,
   Pressable as KeplerPressable,
+  type HWEvent,
 } from '@amazon-devices/react-native-kepler';
 import {
   WebViewErrorEvent,
@@ -260,6 +262,118 @@ const BACK_SCRIPT = `
 })();
 `;
 
+/**
+ * Native-side playback controls. TizenTube's transport-button patch depends on
+ * `window._yttv`, which the Vega WebView does not expose, so its speed/settings
+ * row never appears. These scripts drive the player directly and work whether
+ * or not the userscript's own buttons installed.
+ */
+export type PlayerAction = 'toggle' | 'back10' | 'fwd10' | 'speed' | 'next' | 'settings';
+
+const buildControlScript = (action: PlayerAction): string => `
+(function () {
+  var P = function (m) {
+    try {
+      window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
+        JSON.stringify({type: 'TT_LOG', message: m}));
+    } catch (e) {}
+  };
+  // YouTube TV keeps preview videos in the DOM. Pick the largest visible one,
+  // preferring the playing video, so controls hit the player and not a thumbnail.
+  var v = null;
+  var bestScore = -1;
+  var allVideos = document.querySelectorAll('video');
+  for (var vi = 0; vi < allVideos.length; vi++) {
+    var candidate = allVideos[vi];
+    var rect = candidate.getBoundingClientRect ? candidate.getBoundingClientRect() : {width: 0, height: 0};
+    var score = rect.width * rect.height + (candidate.paused ? 0 : 1000000);
+    if (rect.width > 80 && rect.height > 45 && score > bestScore) {
+      bestScore = score;
+      v = candidate;
+    }
+  }
+  var app = document.querySelector('ytm-app, ytd-app, #app, [id="app"]');
+  var exec = function (req) {
+    try {
+      if (app && app.commandExecutor && app.commandExecutor.executeCommandAction) {
+        app.commandExecutor.executeCommandAction(req);
+        return true;
+      }
+    } catch (e) {}
+    return false;
+  };
+  var key = function (k, code, vk) {
+    ['keydown', 'keyup'].forEach(function (type) {
+      try {
+        document.dispatchEvent(new KeyboardEvent(type, {
+          key: k, code: code, keyCode: vk, which: vk,
+          bubbles: true, cancelable: true
+        }));
+      } catch (e) {}
+    });
+  };
+  switch ('${action}') {
+    case 'toggle':
+      if (v) {
+        if (v.paused) { var p = v.play(); if (p && p.catch) p.catch(function () {}); }
+        else v.pause();
+        P('[ctrl] play/pause');
+      } else { key('k', 'KeyK', 75); }
+      break;
+    case 'back10':
+      if (v) { v.currentTime = Math.max(0, v.currentTime - 10); P('[ctrl] -10s'); }
+      key('j', 'KeyJ', 74);
+      break;
+    case 'fwd10':
+      if (v) { v.currentTime = Math.min(v.duration || 1e9, v.currentTime + 10); P('[ctrl] +10s'); }
+      key('l', 'KeyL', 76);
+      break;
+    case 'speed':
+      if (v) {
+        var rates = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
+        var cur = v.playbackRate || 1;
+        var next = rates[0];
+        for (var i = 0; i < rates.length; i++) {
+          if (rates[i] > cur + 0.01) { next = rates[i]; break; }
+        }
+        v.playbackRate = next;
+        P('[ctrl] speed ' + next + 'x');
+      }
+      break;
+    case 'next':
+      if (!exec({signalAction: {signal: 'PLAYER_PLAY_NEXT'}})) key('n', 'KeyN', 78);
+      P('[ctrl] next');
+      break;
+    case 'settings':
+      if (!exec({customAction: {action: 'TT_SETTINGS_SHOW'}})) key('s', 'KeyS', 83);
+      P('[ctrl] settings');
+      break;
+    default:
+      break;
+  }
+})();
+`;
+
+/** Pause hidden preview videos; they are the main source of Stick decode churn. */
+const PERF_SCRIPT = `
+(function () {
+  var iv = setInterval(function () {
+    try {
+      var vs = document.querySelectorAll('video');
+      for (var i = 0; i < vs.length; i++) {
+        var v = vs[i];
+        var r = v.getBoundingClientRect ? v.getBoundingClientRect() : {width: 0, height: 0, top: 0, left: 0, bottom: 0, right: 0};
+        var tiny = r.width < 80 || r.height < 45;
+        var offscreen = r.bottom <= 0 || r.right <= 0 ||
+          r.top >= (window.innerHeight || 0) || r.left >= (window.innerWidth || 0);
+        if ((tiny || offscreen) && !v.paused) { try { v.pause(); } catch (e) {} }
+      }
+    } catch (e) {}
+  }, 1500);
+  window.addEventListener('pagehide', function () { clearInterval(iv); }, {once: true});
+})();
+`;
+
 const isMainFrameUrl = (url?: string): boolean => {
   if (!url) {
     // No URL reported; treat as a main-frame failure.
@@ -290,6 +404,7 @@ export const App = () => {
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pageLoaded, setPageLoaded] = useState(false);
+  const [controlsVisible, setControlsVisible] = useState(false);
 
   // Track whether TizenTube has been injected for the current page session.
   // YouTube TV is a single-page app: navigating between videos fires
@@ -298,6 +413,9 @@ export const App = () => {
   // players and ad-block hooks pile up and fight each other. Inject once per
   // page load, reset on reload/error.
   const injectedRef = useRef(false);
+  const injectionReadyRef = useRef(false);
+  const injectionAttemptRef = useRef(0);
+  const injectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Cold-start recovery. Right after a sideload the first launch can fail with
   // net::ERR_FAILED while the app's network/renderer stack is still warming up
@@ -314,6 +432,9 @@ export const App = () => {
     return () => {
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
+      }
+      if (injectionTimerRef.current) {
+        clearTimeout(injectionTimerRef.current);
       }
     };
   }, []);
@@ -354,6 +475,34 @@ export const App = () => {
     return () => sub.remove();
   }, []);
 
+  /** Send one playback command to the page. */
+  const runControl = useCallback((action: PlayerAction) => {
+    const web = webRef.current as any;
+    if (!web?.injectJavaScript) return;
+    try {
+      web.injectJavaScript(buildControlScript(action));
+    } catch (err) {
+      console.warn('[VegaTube] control inject failed:', err);
+    }
+  }, []);
+
+  /**
+   * Menu toggles a native control strip. It stays unmounted otherwise, so it
+   * cannot trap D-pad focus away from YouTube's own UI.
+   */
+  useTVEventHandler(
+    useCallback(
+      (event: HWEvent) => {
+        if (event.eventKeyAction !== 0) return;
+        if (!pageLoaded || loadError) return;
+        if (event.eventType === 'menu') {
+          setControlsVisible(prev => !prev);
+        }
+      },
+      [pageLoaded, loadError],
+    ),
+  );
+
   /**
    * Receive diagnostics from the injected prelude (window.ReactNativeWebView).
    * These are the only in-page signals that reach native logs; the WebView's
@@ -369,6 +518,12 @@ export const App = () => {
       const msg = JSON.parse(raw);
       switch (msg.type) {
         case 'TT_READY':
+          injectionReadyRef.current = true;
+          injectionAttemptRef.current = 0;
+          if (injectionTimerRef.current) {
+            clearTimeout(injectionTimerRef.current);
+            injectionTimerRef.current = null;
+          }
           console.info(
             `[VegaTube] injection ready (app v${msg.appVersion}, ` +
               `TizenTube v${msg.ttVersion}, phase=${msg.phase ?? 'start'})`,
@@ -398,10 +553,9 @@ export const App = () => {
    * implements it) can never double-install the patches.
    */
   const injectTizenTube = useCallback(() => {
-    // Already injected for this page session — skip. The sentinel set by the
-    // prelude makes re-injection a no-op anyway, but skipping early avoids
-    // flooding the bridge with chunked injectJavaScript calls.
-    if (injectedRef.current) {
+    // Already confirmed ready for this page session — skip. The prelude sentinel
+    // makes re-runs no-ops; retrying here only covers dropped bridge chunks.
+    if (injectionReadyRef.current || injectedRef.current) {
       return;
     }
     const web = webRef.current as any;
@@ -416,19 +570,41 @@ export const App = () => {
           'JSON.stringify({type:"TT_LOG",message:"[diag] probe ok"}))}catch(e){}',
       );
 
-      // Ship the script in bridge-safe chunks; the page reassembles and runs it.
+      // A dropped chunk used to leave the page with no settings/transport
+      // controls at all. Clear any partial state before (re)sending the set.
+      web.injectJavaScript('window.__TTV__=undefined;true;');
       INJECTION_CHUNKS.forEach((_, index) => {
         web.injectJavaScript(buildChunkScript(index));
       });
       // Sent last: waits for every chunk to land, then executes.
       web.injectJavaScript(buildTriggerScript(INJECTION_CHUNK_COUNT));
+      // Pause hidden preview videos; the Stick cannot decode a grid of them.
+      web.injectJavaScript(PERF_SCRIPT);
 
       injectedRef.current = true;
+      const attempt = injectionAttemptRef.current + 1;
+      injectionAttemptRef.current = attempt;
       console.info(
         `[VegaTube] injected ${(INJECTION_JS.length / 1024).toFixed(0)} KB ` +
           `of TizenTube script in ${INJECTION_CHUNK_COUNT} chunks ` +
-          `(${INJECTION_CHUNK_SIZE / 1024} KB each)`,
+          `(${INJECTION_CHUNK_SIZE / 1024} KB each), attempt ${attempt}`,
       );
+
+      if (injectionTimerRef.current) {
+        clearTimeout(injectionTimerRef.current);
+      }
+      if (attempt <= 2) {
+        injectionTimerRef.current = setTimeout(() => {
+          if (injectionReadyRef.current) return;
+          console.warn(
+            `[VegaTube] no TT_READY after attempt ${attempt}; resending bundle`,
+          );
+          injectedRef.current = false;
+          injectTizenTube();
+        }, 9000);
+      } else {
+        console.warn('[VegaTube] injection did not report ready after 3 attempts');
+      }
     } catch (err) {
       console.error('[VegaTube] injectJavaScript failed:', err);
     }
@@ -443,7 +619,14 @@ export const App = () => {
       setPageLoaded(true);
       // New page session: allow re-injection of TizenTube.
       injectedRef.current = false;
+      injectionReadyRef.current = false;
+      injectionAttemptRef.current = 0;
+      if (injectionTimerRef.current) {
+        clearTimeout(injectionTimerRef.current);
+        injectionTimerRef.current = null;
+      }
       lastBackRef.current = 0;
+      setControlsVisible(false);
       hideSplashScreenCallback();
       injectTizenTube();
     },
@@ -468,7 +651,14 @@ export const App = () => {
       hideSplashScreenCallback();
       // New page session on reload: allow re-injection.
       injectedRef.current = false;
+      injectionReadyRef.current = false;
+      injectionAttemptRef.current = 0;
+      if (injectionTimerRef.current) {
+        clearTimeout(injectionTimerRef.current);
+        injectionTimerRef.current = null;
+      }
       lastBackRef.current = 0;
+      setControlsVisible(false);
 
       if (autoRetryRef.current < MAX_AUTO_RETRIES) {
         const attempt = autoRetryRef.current + 1;
@@ -528,7 +718,14 @@ export const App = () => {
     }
     setLoadError(null);
     setPageLoaded(false);
+    setControlsVisible(false);
     injectedRef.current = false;
+    injectionReadyRef.current = false;
+    injectionAttemptRef.current = 0;
+    if (injectionTimerRef.current) {
+      clearTimeout(injectionTimerRef.current);
+      injectionTimerRef.current = null;
+    }
     lastBackRef.current = 0;
     (webRef.current as any)?.reload();
   }, []);
@@ -555,7 +752,9 @@ export const App = () => {
         // arrive with it off; Back is caught natively and forwarded via
         // BACK_SCRIPT. See the BackHandler effect above.
         allowSystemKeyEvents={false}
-        allowsDefaultMediaControl
+        // Off: the OS media session fights the page for decode/transport on
+        // the Stick and was part of the every-few-videos stutter loop.
+        allowsDefaultMediaControl={false}
         mixedContentMode="compatibility"
         // Allow the TV UI's autoplaying previews and normal playback.
         mediaPlaybackRequiresUserAction={false}
@@ -567,6 +766,32 @@ export const App = () => {
         onHttpError={onHttpError}
         onMessage={onMessage}
       />
+
+      {controlsVisible && !loadError ? (
+        <View style={styles.controlBar}>
+          {([
+            ['toggle', 'Play/Pause'],
+            ['back10', 'Back 10s'],
+            ['fwd10', 'Fwd 10s'],
+            ['speed', 'Speed'],
+            ['next', 'Next'],
+            ['settings', 'Settings'],
+          ] as Array<[PlayerAction, string]>).map(([action, label], index) => (
+            <KeplerPressable
+              key={action}
+              hasTVPreferredFocus={index === 0}
+              onPress={() => runControl(action)}
+              style={state => [styles.controlButton, focusRing(state)]}>
+              <Text style={styles.controlButtonText}>{label}</Text>
+            </KeplerPressable>
+          ))}
+          <KeplerPressable
+            onPress={() => setControlsVisible(false)}
+            style={state => [styles.controlButton, focusRing(state)]}>
+            <Text style={styles.controlButtonText}>Hide (Menu)</Text>
+          </KeplerPressable>
+        </View>
+      ) : null}
 
       {loadError && (
         <View style={styles.overlay}>
@@ -599,6 +824,25 @@ export const App = () => {
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#000000'},
   webview: {flex: 1, backgroundColor: '#000000'},
+  controlBar: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 14,
+    padding: 24,
+    backgroundColor: 'rgba(0,0,0,0.78)',
+  },
+  controlButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#222',
+    borderRadius: 8,
+  },
+  controlButtonText: {color: '#fff', fontSize: 17, fontWeight: '600'},
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#000000',

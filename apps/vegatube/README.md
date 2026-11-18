@@ -24,6 +24,17 @@ or directly:
 npm install && npm run install:device
 ```
 
+## Controls (1.3.2)
+
+TizenTube's speed/settings row needs `window._yttv`, which the Vega WebView does
+not expose, so those buttons never appeared. Press **Menu** for a native control
+strip: Play/Pause, Back 10s, Fwd 10s, Speed (cycles 0.25x–2x), Next, Settings,
+Hide. It is unmounted when hidden, so it never steals D-pad focus from YouTube.
+
+Playback is smoother now: hidden preview videos are paused, the OS media session
+no longer fights the page for transport, and a dropped injection chunk is
+re-sent instead of leaving the page without TizenTube.
+
 ## Credits
 
 - [ReisXD / TizenTube](https://github.com/reisxd/TizenTube): the original
