@@ -121,6 +121,7 @@ const HUB_APP_ID = 'app.fyaisa.hub.main';
 type SavedPair = {host: string; token: string};
 
 const STORE_PATH = '/data/bridge.json';
+const ONBOARD_PATH = '/data/onboarding.json';
 
 const savePair = async (p: SavedPair) => {
   try {
@@ -158,6 +159,25 @@ const clearPair = async () => {
     console.info(`[FYAISA] pairing cleared (${STORE_PATH})`);
   } catch {
     // Missing file is fine; nothing to forget.
+  }
+};
+
+const loadOnboardingSeen = async (): Promise<boolean> => {
+  try {
+    if (!(await KeplerFileSystem.exists(ONBOARD_PATH))) return false;
+    const raw = await KeplerFileSystem.readFileAsString(ONBOARD_PATH, 'UTF-8');
+    return JSON.parse(raw).seen === true;
+  } catch {
+    return false;
+  }
+};
+
+const saveOnboardingSeen = async () => {
+  try {
+    await KeplerFileSystem.removeFile(ONBOARD_PATH).catch(() => {});
+    await KeplerFileSystem.writeStringToFile(ONBOARD_PATH, JSON.stringify({seen: true}), 'UTF-8');
+  } catch (e: any) {
+    console.warn(`[FYAISA] could not save onboarding state: ${e?.message || e}`);
   }
 };
 
@@ -228,6 +248,26 @@ const FALLBACK_CATALOG: Catalog = {
       summary: 'Stopwatch and countdown timer for your Fire TV. Works fully offline.',
       license: 'GPL-3.0-only',
       tags: ['timer', 'stopwatch', 'countdown', 'utility', 'offline'],
+      status: 'stable',
+    },
+    {
+      id: 'app.fyaisa.scoreboard.main',
+      name: 'Couch Scoreboard',
+      summary: 'Two-team scorekeeper for board games and couch tournaments. Fully offline.',
+      path: 'apps/scoreboard',
+      version: '1.0.0',
+      license: 'GPL-3.0-only',
+      tags: ['scoreboard', 'scores', 'game', 'utility', 'offline', 'native'],
+      status: 'stable',
+    },
+    {
+      id: 'app.fyaisa.g2048.main',
+      name: '2048',
+      summary: 'The sliding-tile puzzle, fully offline and driven by the D-pad.',
+      path: 'apps/g2048',
+      version: '1.0.0',
+      license: 'GPL-3.0-only',
+      tags: ['2048', 'puzzle', 'game', 'offline', 'native'],
       status: 'stable',
     },
   ],
@@ -393,8 +433,8 @@ const versionCmp = (a: string, b: string): number => {
   return 0;
 };
 
-const statusColor = (s?: string) =>
-  s === 'stable' ? '#4caf50' : s === 'beta' ? '#ffb300' : '#9e9e9e';
+const statusColor = (t: ResolvedTheme, s?: string) =>
+  s === 'stable' ? t.success : s === 'beta' ? t.warn : t.textMuted;
 
 /**
  * Ask ElevSH what it can do: CLI version + how many Fire TVs it sees.
@@ -423,18 +463,18 @@ const describePc = async (fy: Fyaisa): Promise<string> => {
  */
 const useFocusable = () => {
   const {styles} = useAppTheme();
-  // Press feedback is a one-shot static scale. Kepler's native driver does not
-  // accept color or shadow interpolation, and a shared animated style on every
+  // All five control states are static styles: Kepler's native driver does not
+  // accept color or shadow interpolation, and an animated style shared by every
   // focused row is what made the first post-intro focus abort the app.
   return useCallback(
-    (base: any) => ({
-      focused,
-      pressed,
-    }: {focused: boolean; pressed: boolean}) => [
-      base,
-      focused && styles.focused,
-      pressed && {transform: [{scale: 0.97}]},
-    ],
+    (base: any, opts?: {active?: boolean; disabled?: boolean}) =>
+      ({focused, pressed}: {focused: boolean; pressed: boolean}) => [
+        base,
+        opts?.active && !opts.disabled && styles.controlActive,
+        opts?.disabled && styles.controlDisabled,
+        focused && !opts?.disabled && styles.focused,
+        pressed && !opts?.disabled && styles.controlPressed,
+      ],
     [styles],
   );
 };
@@ -446,7 +486,7 @@ const Hub = ({
   introDone: boolean;
   onIntroDone: () => void;
 }) => {
-  const {styles, theme, applyPreset, patch, resetTheme} = useAppTheme();
+  const {styles, resolved, theme, applyPreset, patch, resetTheme} = useAppTheme();
   const focusable = useFocusable();
   usePreventHideSplashScreen();
   const hideSplashScreenCallback = useHideSplashScreenCallback();
@@ -460,6 +500,21 @@ const Hub = ({
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showFirstRun, setShowFirstRun] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const seen = await loadOnboardingSeen();
+      if (alive) setShowFirstRun(!seen);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const dismissFirstRun = useCallback(() => {
+    setShowFirstRun(false);
+    saveOnboardingSeen();
+  }, []);
   // The intro unmounts its native animation nodes before the hub mounts. Hold
   // one empty frame so Kepler releases those views before a row claims focus.
   const [menuReady, setMenuReady] = useState(false);
@@ -1907,18 +1962,37 @@ const Hub = ({
           <Text style={styles.brand}>{catalog?.hub?.name ?? 'FYAISA'}</Text>
           {catalog?.hub?.tagline ? <Text style={styles.tagline}>{catalog.hub.tagline}</Text> : null}
         </View>
+        {showFirstRun ? (
+          <View style={styles.firstRunCard}>
+            <Text style={styles.firstRunKicker}>FIRST TIME HERE?</Text>
+            <Text style={styles.firstRunTitle}>Start with Apps or ElevSH</Text>
+            <Text style={styles.firstRunBody}>
+              Apps shows everything you can install. ElevSH links this TV to your
+              computer so installs happen from the couch. Open either one —
+              nothing here is permanent.
+            </Text>
+            <Pressable
+              hasTVPreferredFocus
+              focusable
+              style={focusable(styles.firstRunBtn)}
+              onPress={dismissFirstRun}>
+              <Text style={styles.primaryButtonText}>Got it — show me around</Text>
+            </Pressable>
+          </View>
+        ) : null}
         <ScrollView contentContainerStyle={styles.list}>
           {submenus.map((m, i) => {
             return (
               <Pressable
                 key={m.id}
-                hasTVPreferredFocus={i === 0}
+                hasTVPreferredFocus={i === 0 && !showFirstRun}
                 focusable
-                style={({focused}) => [
+                style={({focused, pressed}) => [
                   styles.row,
                   focused && styles.rowFocused,
                   focused && styles.focused,
                   pressedMenuId === m.id && {transform: [{scale: 0.96}]},
+                  pressed && styles.controlPressed,
                 ]}
                 onPressIn={() => setPressedMenuId(m.id)}
                 onPressOut={() => setPressedMenuId(prev => (prev === m.id ? null : prev))}
@@ -1956,6 +2030,16 @@ const Hub = ({
           </Text>
 
           <View style={styles.card}>
+            <Text style={styles.cardTitle}>What is ElevSH?</Text>
+            <Text style={styles.howtoBody}>
+              Fire TV apps cannot install other apps by themselves. ElevSH runs on
+              your computer, builds the app there, and sends it to the stick. You
+              approve it once; after that, installs and updates start from this
+              hub with the remote.
+            </Text>
+          </View>
+
+          <View style={styles.card}>
             <Text style={styles.cardTitle}>Step 1 — on your computer</Text>
             <Text style={styles.code}>fyaisa connect --lan</Text>
             <Text style={styles.howtoBody}>
@@ -1966,7 +2050,7 @@ const Hub = ({
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Step 2 — computer address</Text>
             <Pressable style={focusable(styles.installBtn)} onPress={discoverBridge}>
-              <Text style={styles.backText}>Discover ElevSH on this PC</Text>
+              <Text style={styles.primaryButtonText}>Discover ElevSH on this PC</Text>
             </Pressable>
             <Text style={styles.howtoBody}>
               With fyaisa connect --lan running on the computer, Discover finds it
@@ -1983,7 +2067,7 @@ const Hub = ({
               {HOST_KEYS.map((k, i) => (
                 <Pressable
                   key={i}
-                  style={({focused}) => [styles.key, focused && styles.keyFocused, focused && styles.focused]}
+                  style={({focused, pressed}) => [styles.key, focused && styles.keyFocused, focused && styles.focused, pressed && styles.controlPressed]}
                   onPress={() => {
                     if (k === 'C') {
                       setPair(p => ({...p, host: ''}));
@@ -2001,16 +2085,38 @@ const Hub = ({
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Step 3 — pair</Text>
-            <Text style={styles.statusLine}>
-              Status: {pair.status} — {pair.message}
-            </Text>
+            <View style={[
+              styles.statusBanner,
+              pair.status === 'paired'
+                ? styles.statusBannerOk
+                : pair.status === 'error'
+                  ? styles.statusBannerError
+                  : styles.statusBannerIdle,
+            ]}>
+              <Text style={styles.statusBannerTitle}>
+                {pair.status === 'paired'
+                  ? 'Connected'
+                  : pair.status === 'error'
+                    ? 'Needs attention'
+                    : 'Not connected'}
+              </Text>
+              <Text style={styles.statusBannerBody}>{pair.message}</Text>
+              {pair.status === 'paired' ? (
+                <Text style={styles.successNote}>
+                  Ready — go back to Apps to install or update.
+                </Text>
+              ) : null}
+              {pair.status === 'error' ? (
+                <Text style={styles.keyHint}>Next: OK = try again · Back = menu</Text>
+              ) : null}
+            </View>
             {pcInfo ? <Text style={styles.pcInfo}>{pcInfo}</Text> : null}
             {pair.code ? <Text style={styles.code}>Code: {pair.code}</Text> : null}
             <Pressable
               hasTVPreferredFocus
               style={focusable(styles.installBtn)}
               onPress={startPairing}>
-              <Text style={styles.backText}>
+              <Text style={styles.primaryButtonText}>
                 {pair.status === 'paired' ? 'Re-pair' : 'Get pairing code'}
               </Text>
             </Pressable>
@@ -2172,7 +2278,7 @@ const Hub = ({
           ) : null}
 
           <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
-            <Text style={styles.backText}>Back</Text>
+            <Text style={styles.dangerButtonText}>Back</Text>
           </Pressable>
         </ScrollView>
       </Animated.View>
@@ -2274,7 +2380,7 @@ const Hub = ({
           ) : null}
 
           <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
-            <Text style={styles.backText}>Back</Text>
+            <Text style={styles.dangerButtonText}>Back</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -2308,11 +2414,11 @@ const Hub = ({
                 key={id}
                 hasTVPreferredFocus={i === 0}
                 focusable
-                style={({focused}) => [
+                style={({focused, pressed}) => [
                   styles.toolRow,
                   focused && styles.rowFocused,
                   focused && styles.focused,
-                ]}
+                pressed && styles.controlPressed]}
                 onPress={() => launchApp(id)}>
                 <View style={styles.toolMain}>
                   <Text style={styles.toolTitle}>{id}</Text>
@@ -2337,7 +2443,7 @@ const Hub = ({
             </View>
           ) : null}
           <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
-            <Text style={styles.backText}>Back</Text>
+            <Text style={styles.dangerButtonText}>Back</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -2366,11 +2472,11 @@ const Hub = ({
                 key={id}
                 hasTVPreferredFocus={i === 0}
                 focusable
-                style={({focused}) => [
+                style={({focused, pressed}) => [
                   styles.toolRow,
                   focused && styles.rowFocused,
                   focused && styles.focused,
-                ]}
+                pressed && styles.controlPressed]}
                 onPress={() => terminateApp(id)}>
                 <View style={styles.toolMain}>
                   <Text style={styles.toolTitle}>{id}</Text>
@@ -2391,7 +2497,7 @@ const Hub = ({
             </View>
           ) : null}
           <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
-            <Text style={styles.backText}>Back</Text>
+            <Text style={styles.dangerButtonText}>Back</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -2417,7 +2523,7 @@ const Hub = ({
               <Pressable
                 key={p}
                 focusable
-                style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused, focused && styles.focused]}
+                style={({focused, pressed}) => [styles.ctrlKey, focused && styles.keyFocused, focused && styles.focused, pressed && styles.controlPressed]}
                 onPress={() => setCmdText(p)}>
                 <Text style={styles.ctrlKeyText}>{p}</Text>
               </Pressable>
@@ -2430,7 +2536,7 @@ const Hub = ({
                 key={`${k}-${i}`}
                 hasTVPreferredFocus={i === 0}
                 focusable
-                style={({focused}) => [styles.key, focused && styles.keyFocused]}
+                style={({focused, pressed}) => [styles.key, focused && styles.keyFocused, pressed && styles.controlPressed]}
                 onPress={() => setCmdText(c => (c.length >= CMD_MAX ? c : c + k))}>
                 <Text style={styles.keyText}>{k === ' ' ? '␣' : k}</Text>
               </Pressable>
@@ -2440,19 +2546,19 @@ const Hub = ({
           <View style={styles.keypad}>
             <Pressable
               focusable
-              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              style={({focused, pressed}) => [styles.ctrlKey, focused && styles.keyFocused, pressed && styles.controlPressed]}
               onPress={() => setCmdText(c => c.slice(0, -1))}>
               <Text style={styles.ctrlKeyText}>⌫ Delete</Text>
             </Pressable>
             <Pressable
               focusable
-              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              style={({focused, pressed}) => [styles.ctrlKey, focused && styles.keyFocused, pressed && styles.controlPressed]}
               onPress={() => setCmdText('')}>
               <Text style={styles.ctrlKeyText}>Clear</Text>
             </Pressable>
             <Pressable
               focusable
-              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused, focused && styles.focused]}
+              style={({focused, pressed}) => [styles.ctrlKey, focused && styles.keyFocused, focused && styles.focused, pressed && styles.controlPressed]}
               onPress={runTerminal}>
               <Text style={styles.ctrlKeyText}>{cmdBusy ? 'Running…' : '▶ Run'}</Text>
             </Pressable>
@@ -2468,7 +2574,7 @@ const Hub = ({
           ) : null}
 
           <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId('__connect__')}>
-            <Text style={styles.backText}>Back</Text>
+            <Text style={styles.dangerButtonText}>Back</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -2495,11 +2601,11 @@ const Hub = ({
                 key={p.preset}
                 hasTVPreferredFocus={i === 0}
                 focusable
-                style={({focused}) => [
+                style={({focused, pressed}) => [
                   styles.presetCard,
                   theme.preset === p.preset && styles.presetCardOn,
                   focused && styles.focused,
-                ]}
+                pressed && styles.controlPressed]}
                 onPress={() => applyPreset(p.preset)}>
                 <View style={styles.presetSwatches}>
                   <View style={[styles.presetDot, {backgroundColor: p.palette.bg}]} />
@@ -2553,11 +2659,11 @@ const Hub = ({
               <Pressable
                 key={e.id}
                 focusable
-                style={({focused}) => [
+                style={({focused, pressed}) => [
                   styles.chip,
                   theme.buttonEffect === e.id && styles.chipOn,
                   focused && styles.focused,
-                ]}
+                pressed && styles.controlPressed]}
                 onPress={() => patch({buttonEffect: e.id})}>
                 <Text
                   style={[styles.chipText, theme.buttonEffect === e.id && styles.chipOnText]}>
@@ -2573,11 +2679,11 @@ const Hub = ({
               <Pressable
                 key={b.id}
                 focusable
-                style={({focused}) => [
+                style={({focused, pressed}) => [
                   styles.chip,
                   theme.background === b.id && styles.chipOn,
                   focused && styles.focused,
-                ]}
+                pressed && styles.controlPressed]}
                 onPress={() => patch({background: b.id})}>
                 <Text
                   style={[styles.chipText, theme.background === b.id && styles.chipOnText]}>
@@ -2595,11 +2701,11 @@ const Hub = ({
                   <Pressable
                     key={e.id}
                     focusable
-                    style={({focused}) => [
+                    style={({focused, pressed}) => [
                       styles.chip,
                       theme.energy === e.id && styles.chipOn,
                       focused && styles.focused,
-                    ]}
+                    pressed && styles.controlPressed]}
                     onPress={() => patch({energy: e.id})}>
                     <Text
                       style={[styles.chipText, theme.energy === e.id && styles.chipOnText]}>
@@ -2616,7 +2722,7 @@ const Hub = ({
               <Text style={styles.forgetText}>Reset to Classic</Text>
             </Pressable>
             <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
-              <Text style={styles.backText}>Back</Text>
+              <Text style={styles.dangerButtonText}>Back</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -2656,7 +2762,7 @@ const Hub = ({
           </View>
 
           <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
-            <Text style={styles.backText}>Back</Text>
+            <Text style={styles.dangerButtonText}>Back</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -2684,10 +2790,10 @@ const Hub = ({
                   <Pressable
                     key={`screenshot-${i}`}
                     focusable
-                    style={({focused}) => [
+                    style={({focused, pressed}) => [
                       styles.screenshotCard,
                       focused && styles.screenshotCardFocused,
-                    ]}
+                    pressed && styles.controlPressed]}
                     onPress={() => setScreenshotPreview(url)}>
                     <Image
                       source={{uri: url}}
@@ -2711,13 +2817,13 @@ const Hub = ({
 
           <View style={styles.badges}>
             {selected.status ? (
-              <Badge label={selected.status} color={statusColor(selected.status)} />
+              <Badge label={selected.status} color={statusColor(resolved, selected.status)} />
             ) : null}
-            {installed.has(selected.id) ? <Badge label="installed" color="#4caf50" /> : null}
-            {selected.license ? <Badge label={selected.license} color="#64b5f6" /> : null}
-            {selected.containsAds === false ? <Badge label="no ads" color="#4caf50" /> : null}
+            {installed.has(selected.id) ? <Badge label="installed" color={resolved.success} /> : null}
+            {selected.license ? <Badge label={selected.license} color={resolved.link} /> : null}
+            {selected.containsAds === false ? <Badge label="no ads" color={resolved.success} /> : null}
             {selected.minOsVersion ? (
-              <Badge label={`OS ${selected.minOsVersion}+`} color="#b39ddb" />
+              <Badge label={`OS ${selected.minOsVersion}+`} color={resolved.accent} />
             ) : null}
           </View>
 
@@ -2764,7 +2870,7 @@ const Hub = ({
                 </Text>
                 {syncing ? (
                   <Pressable disabled style={[styles.installBtn, styles.idleBtn]}>
-                    <Text style={[styles.backText, styles.idleText]}>Syncing…</Text>
+                    <Text style={[styles.primaryButtonText, styles.idleText]}>Syncing…</Text>
                   </Pressable>
                 ) : appState(selected) === 'current' ? (
                   <Text style={styles.upToDate}>
@@ -2774,7 +2880,7 @@ const Hub = ({
                   <Pressable
                     style={focusable(styles.installBtn)}
                     onPress={() => requestInstall(selected.id)}>
-                    <Text style={styles.backText}>
+                    <Text style={styles.primaryButtonText}>
                       {appState(selected) === 'update' ? 'Update' : 'Install'} via ElevSH ({pair.host})
                     </Text>
                   </Pressable>
@@ -2802,7 +2908,7 @@ const Hub = ({
                       disabled={!!appBusy}
                       style={focusable(styles.detailOpenBtn)}
                       onPress={() => openApp(selected.id)}>
-                      <Text style={styles.backText}>Open on Fire TV</Text>
+                      <Text style={styles.primaryButtonText}>Open on Fire TV</Text>
                     </Pressable>
                     <Pressable
                       focusable
@@ -2824,7 +2930,7 @@ const Hub = ({
                 ) : null}
                 {appBusy ? <Text style={styles.pcInfo}>{appBusy}</Text> : null}
                 {appNote ? (
-                  <Text style={appNote.ok ? styles.pcInfo : styles.toolDanger}>
+                  <Text style={appNote.ok ? styles.successNote : styles.errorNote}>
                     {appNote.text}
                   </Text>
                 ) : null}
@@ -2848,7 +2954,7 @@ const Hub = ({
             }
             style={focusable(styles.backBtn)}
             onPress={() => setSelectedId('__apps__')}>
-            <Text style={styles.backText}>Back to catalog</Text>
+            <Text style={styles.dangerButtonText}>Back to catalog</Text>
           </Pressable>
         </ScrollView>
       </View>
@@ -2874,7 +2980,7 @@ const Hub = ({
                 key={k}
                 hasTVPreferredFocus={i === 0}
                 focusable
-                style={({focused}) => [styles.key, focused && styles.keyFocused]}
+                style={({focused, pressed}) => [styles.key, focused && styles.keyFocused, pressed && styles.controlPressed]}
                 onPress={() => setQuery(q => (q.length >= SEARCH_MAX ? q : q + k))}>
                 <Text style={styles.keyText}>{k === ' ' ? '␣' : k}</Text>
               </Pressable>
@@ -2883,19 +2989,19 @@ const Hub = ({
           <View style={styles.keypad}>
             <Pressable
               focusable
-              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              style={({focused, pressed}) => [styles.ctrlKey, focused && styles.keyFocused, pressed && styles.controlPressed]}
               onPress={() => setQuery(q => q.slice(0, -1))}>
               <Text style={styles.ctrlKeyText}>⌫ Delete</Text>
             </Pressable>
             <Pressable
               focusable
-              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              style={({focused, pressed}) => [styles.ctrlKey, focused && styles.keyFocused, pressed && styles.controlPressed]}
               onPress={() => setQuery('')}>
               <Text style={styles.ctrlKeyText}>Clear</Text>
             </Pressable>
             <Pressable
               focusable
-              style={({focused}) => [styles.ctrlKey, focused && styles.keyFocused]}
+              style={({focused, pressed}) => [styles.ctrlKey, focused && styles.keyFocused, pressed && styles.controlPressed]}
               onPress={() => setKeyboardOpen(false)}>
               <Text style={styles.ctrlKeyText}>Done</Text>
             </Pressable>
@@ -2919,7 +3025,7 @@ const Hub = ({
       <View style={styles.toolbar}>
         <Pressable
           focusable
-          style={({focused}) => [styles.searchBox, focused && styles.focused]}
+          style={({focused, pressed}) => [styles.searchBox, focused && styles.focused, pressed && styles.controlPressed]}
           onPress={() => setKeyboardOpen(true)}>
           <Text style={[styles.searchText, !query && styles.searchPlaceholder]} numberOfLines={1}>
             {query ? `"${query}"` : 'Search apps'}
@@ -2932,9 +3038,9 @@ const Hub = ({
           <Pressable
             focusable={!syncing}
             disabled={syncing}
-            style={({focused}) => [styles.updateAllBtn, syncing && styles.idleBtn, focused && styles.focused]}
+            style={({focused, pressed}) => [styles.updateAllBtn, syncing && styles.idleBtn, focused && styles.focused, pressed && styles.controlPressed]}
             onPress={runUpdateAll}>
-            <Text style={[styles.refreshText, syncing && styles.idleText]}>
+            <Text style={[styles.accentButtonText, syncing && styles.idleText]}>
               {syncing
                 ? 'Syncing…'
                 : updateAll
@@ -2948,7 +3054,7 @@ const Hub = ({
             falling back to the built-in list if GitHub is unreachable. */}
         <Pressable
           focusable
-          style={({focused}) => [styles.refreshBtn, focused && styles.focused]}
+          style={({focused, pressed}) => [styles.refreshBtn, focused && styles.focused, pressed && styles.controlPressed]}
           onPress={() => loadCatalog()}>
           <Text style={styles.refreshText}>{loading ? 'Refreshing…' : 'Refresh'}</Text>
         </Pressable>
@@ -3003,7 +3109,7 @@ const Hub = ({
               <Text style={styles.emptyTitle}>No apps match "{query}".</Text>
               <Pressable
                 focusable
-                style={({focused}) => [styles.refreshBtn, focused && styles.focused]}
+                style={({focused, pressed}) => [styles.refreshBtn, focused && styles.focused, pressed && styles.controlPressed]}
                 onPress={() => setQuery('')}>
                 <Text style={styles.refreshText}>Clear search</Text>
               </Pressable>
@@ -3013,11 +3119,11 @@ const Hub = ({
           {filteredApps.map((a, i) => {
             const state = appState(a);
             return (
-              <View key={a.id} style={styles.rowCard}>
+              <View key={a.id} style={[styles.rowCard, state === 'current' && styles.rowCardActive]}>
                 <Pressable
                   hasTVPreferredFocus={i === 0}
                   focusable
-                  style={({focused}) => [styles.rowBody, focused && styles.rowFocused, focused && styles.focused]}
+                  style={({focused, pressed}) => [styles.rowBody, focused && styles.rowFocused, focused && styles.focused, pressed && styles.controlPressed]}
                   onPress={() => setSelectedId(a.id)}>
                   <AppIcon app={a} style={styles.rowIcon} />
                   <View style={styles.rowMain}>
@@ -3029,7 +3135,7 @@ const Hub = ({
                       </Text>
                     ) : null}
                   </View>
-                  <View style={[styles.dot, {backgroundColor: statusColor(a.status)}]} />
+                  <View style={[styles.dot, {backgroundColor: statusColor(resolved, a.status)}]} />
                 </Pressable>
                 {/* Sibling of the row body, not a child: a nested focusable
                     inside the row Pressable confuses D-pad focus. A current
@@ -3046,7 +3152,7 @@ const Hub = ({
                 ) : (
                   <Pressable
                     focusable
-                    style={({focused}) => [styles.rowActionBtn, focused && styles.focused]}
+                    style={({focused, pressed}) => [styles.rowActionBtn, focused && styles.focused, pressed && styles.controlPressed]}
                     onPress={() => {
                       if (pair.status !== 'paired') {
                         setPair(p => ({
@@ -3134,7 +3240,7 @@ const ToolRow = ({
   return (
     <Pressable
       focusable
-      style={({focused}) => [styles.toolRow, focused && styles.rowFocused, focused && styles.focused]}
+      style={({focused, pressed}) => [styles.toolRow, focused && styles.rowFocused, focused && styles.focused, pressed && styles.controlPressed]}
       onPress={onPress}>
       <View style={styles.toolMain}>
         <Text style={[styles.toolTitle, danger && styles.toolDanger]}>{title}</Text>
@@ -3167,7 +3273,7 @@ const DebloatRow = ({
     <Pressable
       hasTVPreferredFocus={first}
       focusable
-      style={({focused}) => [styles.toolRow, focused && styles.rowFocused, focused && styles.focused]}
+      style={({focused, pressed}) => [styles.toolRow, focused && styles.rowFocused, focused && styles.focused, pressed && styles.controlPressed]}
       onPress={onPress}>
       <View style={[styles.checkBox, checked && styles.checkBoxOn]}>
         {checked ? <Text style={styles.checkMark}>✓</Text> : null}
@@ -3204,12 +3310,12 @@ const SwatchGrid = ({
           <Pressable
             key={c}
             focusable
-            style={({focused}) => [
+            style={({focused, pressed}) => [
               styles.swatch,
               {backgroundColor: c === RAINBOW ? rainbowHex : c},
               on && styles.swatchOn,
               focused && styles.focused,
-            ]}
+            pressed && styles.controlPressed]}
             onPress={() => onPick(c)}>
             {on ? <View style={styles.swatchCheck} /> : null}
           </Pressable>
@@ -3231,21 +3337,21 @@ const makeStyles = (t: ResolvedTheme) => {
   return StyleSheet.create({
   root: {flex: 1, backgroundColor: t.bg},
   wrap: {flex: 1},
-  header: {paddingHorizontal: 40, paddingTop: 36, paddingBottom: 18},
-  brand: {color: t.text, fontSize: 40, fontWeight: '700'},
-  tagline: {color: t.textDim, fontSize: 17, marginTop: 4},
+  header: {paddingHorizontal: 44, paddingTop: 40, paddingBottom: 20},
+  brand: {color: t.text, fontSize: 46, fontWeight: '800'},
+  tagline: {color: t.textDim, fontSize: 19, marginTop: 6, lineHeight: 26},
   center: {flex: 1, alignItems: 'center', justifyContent: 'center'},
-  dim: {color: t.textMuted, fontSize: 16, marginTop: 12},
-  warn: {color: t.warn, fontSize: 15, marginBottom: 12},
-  list: {paddingHorizontal: 40, paddingBottom: 40},
+  dim: {color: t.textMuted, fontSize: 18, marginTop: 12},
+  warn: {color: t.warn, fontSize: 17, marginBottom: 12},
+  list: {paddingHorizontal: 44, paddingBottom: 44},
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: t.surface,
     borderRadius: 10,
     ...buttonBase,
-    padding: 18,
-    marginBottom: 12,
+    padding: 20,
+    marginBottom: 14,
   },
   rowFocused: {backgroundColor: t.surfaceAlt},
   rowCard: {
@@ -3254,16 +3360,16 @@ const makeStyles = (t: ResolvedTheme) => {
     backgroundColor: t.surface,
     borderRadius: 10,
     ...buttonBase,
-    padding: 18,
-    marginBottom: 12,
+    padding: 20,
+    marginBottom: 14,
   },
   rowBody: {flex: 1, flexDirection: 'row', alignItems: 'center'},
-  rowIcon: {width: 76, height: 76, borderRadius: 14, marginRight: 18},
-  detailIcon: {width: 96, height: 96, borderRadius: 18, marginBottom: 14},
+  rowIcon: {width: 84, height: 84, borderRadius: 16, marginRight: 20},
+  detailIcon: {width: 108, height: 108, borderRadius: 20, marginBottom: 16},
   rowMain: {flex: 1, paddingRight: 16},
-  rowTitle: {color: t.text, fontSize: 22, fontWeight: '600'},
-  rowId: {color: t.textMuted, fontSize: 13, marginTop: 2},
-  rowSummary: {color: t.textSoft, fontSize: 15, marginTop: 6},
+  rowTitle: {color: t.text, fontSize: 25, fontWeight: '700'},
+  rowId: {color: t.textMuted, fontSize: 15, marginTop: 3},
+  rowSummary: {color: t.textSoft, fontSize: 17, marginTop: 7, lineHeight: 23},
   rowActionBtn: {
     backgroundColor: t.accent,
     borderRadius: 6,
@@ -3272,21 +3378,22 @@ const makeStyles = (t: ResolvedTheme) => {
     paddingVertical: 11,
     marginLeft: 8,
   },
-  rowActionText: {color: t.accentText, fontSize: 16, fontWeight: '600'},
+  rowActionText: {color: t.accentText, fontSize: 18, fontWeight: '700'},
   rowActionCurrent: {backgroundColor: t.surfaceKey},
+  rowCardActive: {backgroundColor: t.surfaceKey, borderColor: t.accent},
   rowActionMutedText: {color: t.textDim},
   // "Syncing…" buttons: the real button shape, muted, and disabled so they take
   // no press and no D-pad step while ElevSH is still reading the device.
   idleBtn: {backgroundColor: t.surfaceKey},
   idleText: {color: t.textDim},
-  dot: {width: 12, height: 12, borderRadius: 6},
+  dot: {width: 14, height: 14, borderRadius: 7},
   chevron: {color: t.textMuted, fontSize: 30, fontWeight: '600'},
   detailWrap: {flex: 1},
-  detail: {padding: 40, paddingBottom: 60},
-  detailTitle: {color: t.text, fontSize: 38, fontWeight: '700'},
+  detail: {padding: 44, paddingBottom: 64},
+  detailTitle: {color: t.text, fontSize: 44, fontWeight: '800'},
   detailId: {color: t.textMuted, fontSize: 15, marginTop: 4},
-  detailSummary: {color: t.textStrong, fontSize: 20, marginTop: 16},
-  detailBody: {color: t.textBody, fontSize: 16, marginTop: 14, lineHeight: 23},
+  detailSummary: {color: t.textStrong, fontSize: 23, marginTop: 18, lineHeight: 30},
+  detailBody: {color: t.textBody, fontSize: 18, marginTop: 16, lineHeight: 26},
   badges: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 20},
   badge: {
     borderWidth: 1,
@@ -3296,18 +3403,18 @@ const makeStyles = (t: ResolvedTheme) => {
     marginRight: 8,
     marginBottom: 8,
   },
-  badgeText: {fontSize: 13},
-  meta: {color: t.textDim, fontSize: 15, marginTop: 6},
+  badgeText: {fontSize: 15, fontWeight: '600'},
+  meta: {color: t.textDim, fontSize: 17, marginTop: 8},
   notes: {marginTop: 18},
-  note: {color: t.textBody, fontSize: 15, marginBottom: 6, lineHeight: 21},
+  note: {color: t.textBody, fontSize: 17, marginBottom: 8, lineHeight: 24},
   howto: {
     marginTop: 26,
     backgroundColor: t.surface,
     borderRadius: 10,
     padding: 18,
   },
-  howtoTitle: {color: t.text, fontSize: 19, fontWeight: '600', marginBottom: 8},
-  howtoBody: {color: t.textBody, fontSize: 15, lineHeight: 21},
+  howtoTitle: {color: t.text, fontSize: 22, fontWeight: '700', marginBottom: 10},
+  howtoBody: {color: t.textBody, fontSize: 17, lineHeight: 25},
   code: {
     color: t.code,
     fontSize: 17,
@@ -3336,7 +3443,7 @@ const makeStyles = (t: ResolvedTheme) => {
     marginTop: 12,
   },
   detailRemoveArmed: {backgroundColor: t.danger},
-  detailRemoveArmedText: {color: '#ffffff'},
+  detailRemoveArmedText: {color: t.dangerButtonText},
   // Screenshot gallery on the app detail view.
   screenshotsSection: {marginTop: 20},
   screenshotsTitle: {color: t.text, fontSize: 20, fontWeight: '600', marginBottom: 10},
@@ -3369,7 +3476,7 @@ const makeStyles = (t: ResolvedTheme) => {
   // Full-screen screenshot preview overlay.
   previewOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#000000',
+    backgroundColor: t.bg,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3384,14 +3491,14 @@ const makeStyles = (t: ResolvedTheme) => {
     alignItems: 'center',
   },
   previewTitle: {
-    color: '#ffffff',
-    fontSize: 20,
+    color: t.text,
+    fontSize: 22,
     fontWeight: '600',
     marginBottom: 6,
   },
   previewHint: {
-    color: '#9e9e9e',
-    fontSize: 16,
+    color: t.textDim,
+    fontSize: 18,
     marginTop: 12,
   },
   previewCloseBtn: {
@@ -3411,14 +3518,14 @@ const makeStyles = (t: ResolvedTheme) => {
     paddingVertical: 13,
     borderRadius: 6,
   },
-  backText: {color: '#ffffff', fontSize: 18},
+  backText: {color: t.text, fontSize: 19, fontWeight: '600'},
   card: {
     backgroundColor: t.surface,
     borderRadius: 10,
     padding: 18,
     marginTop: 18,
   },
-  cardTitle: {color: t.text, fontSize: 19, fontWeight: '600', marginBottom: 10},
+  cardTitle: {color: t.text, fontSize: 22, fontWeight: '700', marginBottom: 12},
   // Empty state cards: centred, icon + message, used when there's nothing to show.
   emptyCard: {
     alignItems: 'center',
@@ -3450,12 +3557,12 @@ const makeStyles = (t: ResolvedTheme) => {
     justifyContent: 'center',
     paddingVertical: 60,
   },
-  statusLine: {color: t.textSoft, fontSize: 15, marginBottom: 10},
-  pcInfo: {color: t.code, fontSize: 14, marginBottom: 10},
+  statusLine: {color: t.textSoft, fontSize: 17, marginBottom: 10},
+  pcInfo: {color: t.code, fontSize: 16, marginBottom: 10},
   keypad: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 12},
   key: {
-    width: 68,
-    height: 58,
+    width: 72,
+    height: 62,
     margin: 4,
     borderRadius: 8,
     backgroundColor: t.surfaceKey,
@@ -3463,8 +3570,8 @@ const makeStyles = (t: ResolvedTheme) => {
     alignItems: 'center',
     justifyContent: 'center',
   },
-  keyFocused: {backgroundColor: t.accent},
-  keyText: {color: t.text, fontSize: 24},
+  keyFocused: {backgroundColor: t.surfaceKey, borderColor: t.focus},
+  keyText: {color: t.text, fontSize: 26, fontWeight: '600'},
   installBtn: {
     marginTop: 16,
     alignSelf: 'flex-start',
@@ -3483,7 +3590,7 @@ const makeStyles = (t: ResolvedTheme) => {
     paddingVertical: 10,
     borderRadius: 6,
   },
-  forgetText: {color: t.dangerChipText, fontSize: 16},
+  forgetText: {color: t.dangerChipText, fontSize: 17},
   accessRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3496,8 +3603,8 @@ const makeStyles = (t: ResolvedTheme) => {
     marginTop: 10,
   },
   accessMain: {flex: 1, paddingRight: 12},
-  accessApp: {color: t.text, fontSize: 16, fontWeight: '600'},
-  accessMeta: {color: t.textDim, fontSize: 13, marginTop: 2},
+  accessApp: {color: t.text, fontSize: 18, fontWeight: '700'},
+  accessMeta: {color: t.textDim, fontSize: 15, marginTop: 3},
   accessAllow: {color: t.code},
   accessDeny: {color: t.dangerText},
   allowBtn: {
@@ -3516,8 +3623,8 @@ const makeStyles = (t: ResolvedTheme) => {
     paddingVertical: 9,
     marginLeft: 8,
   },
-  accessBtnText: {color: '#ffffff', fontSize: 15, fontWeight: '600'},
-  denyBtnText: {color: t.dangerChipText, fontSize: 15, fontWeight: '600'},
+  accessBtnText: {color: t.successButtonText, fontSize: 16, fontWeight: '700'},
+  denyBtnText: {color: t.dangerChipText, fontSize: 16, fontWeight: '700'},
   toolbar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3535,7 +3642,7 @@ const makeStyles = (t: ResolvedTheme) => {
     paddingVertical: 14,
     marginRight: 12,
   },
-  searchText: {color: t.text, fontSize: 18},
+  searchText: {color: t.text, fontSize: 20},
   searchPlaceholder: {color: t.textMuted},
   refreshBtn: {
     backgroundColor: t.surface,
@@ -3545,7 +3652,7 @@ const makeStyles = (t: ResolvedTheme) => {
     paddingVertical: 14,
     alignSelf: 'flex-start',
   },
-  refreshText: {color: t.text, fontSize: 18, fontWeight: '600'},
+  refreshText: {color: t.text, fontSize: 19, fontWeight: '700'},
   updateAllBtn: {
     backgroundColor: t.accent,
     borderRadius: 10,
@@ -3555,8 +3662,8 @@ const makeStyles = (t: ResolvedTheme) => {
     marginRight: 12,
     alignSelf: 'flex-start',
   },
-  jobStrip: {color: t.link, fontSize: 15, paddingHorizontal: 40, paddingBottom: 12},
-  jobStripWarn: {color: t.warn, fontSize: 15, paddingHorizontal: 40, paddingBottom: 12},
+  jobStrip: {color: t.link, fontSize: 17, paddingHorizontal: 44, paddingBottom: 12},
+  jobStripWarn: {color: t.warn, fontSize: 17, paddingHorizontal: 44, paddingBottom: 12},
   searchQuery: {color: t.text, fontSize: 26, fontWeight: '600', marginTop: 8},
   searchCount: {color: t.textMuted, fontSize: 15, marginTop: 4},
   ctrlKey: {
@@ -3583,8 +3690,8 @@ const makeStyles = (t: ResolvedTheme) => {
     marginTop: 10,
   },
   toolMain: {flex: 1, paddingRight: 12},
-  toolTitle: {color: t.text, fontSize: 18, fontWeight: '600'},
-  toolSummary: {color: t.textDim, fontSize: 14, marginTop: 2},
+  toolTitle: {color: t.text, fontSize: 20, fontWeight: '700'},
+  toolSummary: {color: t.textDim, fontSize: 16, marginTop: 3},
   toolDanger: {color: t.dangerText},
   toolOpen: {color: t.link, fontSize: 15, fontWeight: '600'},
   // De-bloat: tick boxes, the control bar, and the red remove button.
@@ -3620,8 +3727,8 @@ const makeStyles = (t: ResolvedTheme) => {
     borderColor: t.border,
     padding: 14,
   },
-  toolOutTitle: {color: t.code, fontSize: 14, fontWeight: '600', marginBottom: 8},
-  toolOutText: {color: t.textBody, fontSize: 13, fontFamily: 'monospace', lineHeight: 19},
+  toolOutTitle: {color: t.code, fontSize: 16, fontWeight: '700', marginBottom: 8},
+  toolOutText: {color: t.textBody, fontSize: 15, fontFamily: 'monospace', lineHeight: 21},
   focused: {
     borderWidth: 4,
     // Static ring. Kepler's native driver rejects animated colors and shadows;
@@ -3642,8 +3749,8 @@ const makeStyles = (t: ResolvedTheme) => {
   jobStatus: {color: t.code, fontSize: 15, marginBottom: 6},
   jobLine: {color: t.textDim, fontSize: 12, fontFamily: 'monospace'},
   // Themes screen.
-  sectionTitle: {color: t.text, fontSize: 20, fontWeight: '600', marginTop: 24, marginBottom: 6},
-  sectionHint: {color: t.textDim, fontSize: 14, marginBottom: 10},
+  sectionTitle: {color: t.text, fontSize: 23, fontWeight: '700', marginTop: 26, marginBottom: 8},
+  sectionHint: {color: t.textDim, fontSize: 16, marginBottom: 12},
   presetGrid: {flexDirection: 'row', flexWrap: 'wrap'},
   presetCard: {
     width: 260,
@@ -3664,7 +3771,7 @@ const makeStyles = (t: ResolvedTheme) => {
     borderWidth: 1,
     borderColor: t.border,
   },
-  presetName: {color: t.text, fontSize: 16, fontWeight: '600'},
+  presetName: {color: t.text, fontSize: 18, fontWeight: '700'},
   presetState: {color: t.textDim, fontSize: 13, marginTop: 4},
   swatchGrid: {flexDirection: 'row', flexWrap: 'wrap'},
   swatch: {
@@ -3691,9 +3798,53 @@ const makeStyles = (t: ResolvedTheme) => {
     alignSelf: 'flex-start',
   },
   chipOn: {backgroundColor: t.accent},
-  chipText: {color: t.text, fontSize: 16, fontWeight: '600'},
+  chipText: {color: t.text, fontSize: 18, fontWeight: '700'},
   chipOnText: {color: t.accentText},
   themeActions: {flexDirection: 'row', alignItems: 'center', marginTop: 8},
+  // Five distinct control states, shared by rows, cards, chips and buttons.
+  controlActive: {backgroundColor: t.surfaceKey, borderColor: t.accent},
+  controlPressed: {backgroundColor: t.surfaceKey, transform: [{scale: 0.96}]},
+  controlDisabled: {backgroundColor: t.surfaceDeep, opacity: 0.55},
+  primaryButtonText: {color: t.successButtonText, fontSize: 19, fontWeight: '700'},
+  dangerButtonText: {color: t.dangerButtonText, fontSize: 19, fontWeight: '700'},
+  accentButtonText: {color: t.accentText, fontSize: 19, fontWeight: '700'},
+  successNote: {color: t.success, fontSize: 17, marginTop: 10, lineHeight: 24},
+  errorNote: {color: t.dangerText, fontSize: 17, marginTop: 10, lineHeight: 24},
+  keyHint: {color: t.warn, fontSize: 16, marginTop: 8},
+  statusBanner: {
+    backgroundColor: t.surfaceAlt,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: t.border,
+    padding: 16,
+    marginBottom: 14,
+  },
+  statusBannerOk: {borderColor: t.success},
+  statusBannerError: {borderColor: t.danger},
+  statusBannerIdle: {borderColor: t.border},
+  statusBannerTitle: {color: t.text, fontSize: 22, fontWeight: '800'},
+  statusBannerBody: {color: t.textSoft, fontSize: 17, marginTop: 5, lineHeight: 23},
+  firstRunCard: {
+    backgroundColor: t.surfaceAlt,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: t.accent,
+    padding: 22,
+    marginHorizontal: 44,
+    marginBottom: 18,
+  },
+  firstRunKicker: {color: t.accent, fontSize: 15, fontWeight: '800', letterSpacing: 2},
+  firstRunTitle: {color: t.text, fontSize: 28, fontWeight: '800', marginTop: 6},
+  firstRunBody: {color: t.textSoft, fontSize: 18, lineHeight: 26, marginTop: 8},
+  firstRunBtn: {
+    backgroundColor: t.success,
+    borderRadius: 8,
+    ...buttonBase,
+    paddingHorizontal: 26,
+    paddingVertical: 14,
+    marginTop: 16,
+    alignSelf: 'flex-start',
+  },
 });
 };
 

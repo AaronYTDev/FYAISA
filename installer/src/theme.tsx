@@ -71,6 +71,8 @@ export type ResolvedTheme = ThemePalette & {
   dangerSoft: string;
   dangerText: string;
   dangerChipText: string;
+  dangerButtonText: string;
+  successButtonText: string;
   textStrong: string;
   textSoft: string;
   textBody: string;
@@ -184,6 +186,8 @@ export const resolveTheme = (theme: Theme, hue = 0): ResolvedTheme => {
     dangerSoft: mix(c.danger, c.bg, 0.78),
     dangerText: mix(c.danger, '#ffffff', 0.4),
     dangerChipText: contrastOn(mix(c.danger, c.bg, 0.78)),
+    dangerButtonText: contrastOn(c.danger),
+    successButtonText: contrastOn(c.success),
     textStrong: c.text,
     textSoft: mix(c.text, c.textDim, 0.5),
     textBody: mix(c.text, c.textDim, 0.8),
