@@ -11,9 +11,6 @@ min = "1.2"
 target = "1.2"
 
 [needs]
-[[needs.module]]
-id = "/com.amazon.vega.os@IVega_1_2"
-
 [[needs.privilege]]
 id = "com.amazon.privilege.security.file-sharing"
 
