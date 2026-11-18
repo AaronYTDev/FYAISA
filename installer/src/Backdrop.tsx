@@ -15,7 +15,7 @@
  * is "off" nothing renders at all.
  */
 import * as React from 'react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Easing, StyleSheet, Animated, View } from 'react-native';
 import {useAppTheme} from './theme';
 
@@ -193,7 +193,7 @@ const Grid = ({
   accent: string;
 }) => {
   // A grid of cells whose border color pulses between the surface and accent.
-  const cells: JSX.Element[] = [];
+  const cells: React.ReactElement[] = [];
   const cellW = 160;
   const cellH = 140;
   for (let r = 0; r < GRID_ROWS; r++) {
@@ -234,54 +234,77 @@ const MatrixRain = ({
   driver: Animated.Value;
   accent: string;
 }) => {
-  // Falling columns of characters, Matrix style. Each column is a small set of
-  // labels that move down and reset, coloured by the theme accent.
-  const columns = 10;
-  const charsPerCol = 6;
-  const items: JSX.Element[] = [];
-  for (let c = 0; c < columns; c++) {
-    for (let r = 0; r < charsPerCol; r++) {
-      const ch = GRID_CHARS[Math.floor(Math.random() * GRID_CHARS.length)];
-      const colValue = driver.interpolate({
-        inputRange: [0, 1],
-        outputRange: [c * 0.09, c * 0.09 + 0.5],
-      });
-      const fall = Animated.loop(
+  // Falling columns of characters, Matrix style. One loop drives each column;
+  // its characters share the value with staggered translateY ranges. Values
+  // are created once and all loops are stopped on unmount — no render-time
+  // animation starts, and Animated.timing drives a plain Animated.Value
+  // instead of an interpolation derived from the shared driver.
+  const columns = useMemo(
+    () =>
+      Array.from({length: 10}, (_, index) => ({
+        index,
+        left: index * 44,
+        duration: 1200 + index * 200,
+        chars: Array.from(
+          {length: 6},
+          () => GRID_CHARS[Math.floor(Math.random() * GRID_CHARS.length)],
+        ),
+        value: new Animated.Value(0),
+      })),
+    [],
+  );
+
+  useEffect(() => {
+    const loops = columns.map(col =>
+      Animated.loop(
         Animated.sequence([
-          Animated.timing(colValue, {
-            toValue: 1 + c * 0.09,
-            duration: 1200 + c * 200,
+          Animated.delay(col.index * 90),
+          Animated.timing(col.value, {
+            toValue: 1,
+            duration: col.duration,
             easing: Easing.linear,
             useNativeDriver: true,
           }),
-          Animated.timing(colValue, {
-            toValue: c * 0.09 - 0.6,
+          Animated.timing(col.value, {
+            toValue: 0,
             duration: 0,
             easing: Easing.linear,
             useNativeDriver: true,
           }),
         ]),
-      );
+      ),
+    );
+    loops.forEach(loop => loop.start());
+    return () => loops.forEach(loop => loop.stop());
+  }, [columns]);
+
+  const opacity = driver.interpolate({inputRange: [0, 1], outputRange: [0.55, 0.95]});
+  const items: React.ReactElement[] = [];
+  columns.forEach(col => {
+    col.chars.forEach((ch, r) => {
+      const fall = col.value.interpolate({
+        inputRange: [0, 1],
+        outputRange: [-160 - r * 38, 1120 + col.index * 24 + r * 38],
+      });
       items.push(
         <Animated.Text
-          key={`matrix-${c}-${r}`}
+          key={`matrix-${col.index}-${r}`}
           style={
             {
               position: 'absolute',
-              left: c * 44,
+              left: col.left,
               top: 0,
               color: accent,
               fontSize: 18,
-              opacity: 0.85,
+              opacity,
               transform: [{translateY: fall}],
             } as any
           }>
           {ch}
         </Animated.Text>
       );
-      fall.start();
-    }
-  }
+    });
+  });
   return <>{items}</>;
 };
 

@@ -623,12 +623,20 @@ export const ThemeProvider = ({
   );
 
   // While any colour channel is set to "rainbow", keep a hue clock advancing
-  // (a full smooth sweep every ~5 s). The resolved palette below re-derives
-  // from it every frame, so every use of that channel animates in place.
+  // (a full sweep every ~5 s). Quantising the hue to 64 steps at 80 ms keeps
+  // the sweep visually smooth without re-resolving the whole stylesheet on
+  // every 33 ms tick. Inactive themes park at a stable hue.
   useEffect(() => {
-    if (!rainbowActive) return;
+    if (!rainbowActive) {
+      setHue(0);
+      return;
+    }
     const start = Date.now();
-    const iv = setInterval(() => setHue(((Date.now() - start) / 5000) % 1), 33);
+    const iv = setInterval(() => {
+      const steps = 64;
+      const next = (Math.floor(((Date.now() - start) / 5000) * steps) % steps) / steps;
+      setHue(prev => (prev === next ? prev : next));
+    }, 80);
     return () => clearInterval(iv);
   }, [rainbowActive]);
 

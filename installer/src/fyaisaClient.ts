@@ -214,7 +214,12 @@ export class Fyaisa {
       throw new FyaisaError(0, `bridge unreachable at ${host}:${port} (${e?.message || e})`);
     }
     if (!res.ok) {
-      throw new FyaisaError(res.status, `pairing request failed (HTTP ${res.status})`);
+      const body = await res.json().catch(() => ({} as any));
+      throw new FyaisaError(
+        res.status,
+        body.error || `pairing request failed (HTTP ${res.status})`,
+        body.code,
+      );
     }
     return res.json();
   }
@@ -263,13 +268,26 @@ export class Fyaisa {
         if (st.approved) {
           const ok = await fetch(`http://${host}:${port}/pair/approve`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({code, device: 'fyaisa-client'}),
+            headers: {
+              'Content-Type': 'application/json',
+              ...(opts.appId ? {'X-FYAISA-App': opts.appId} : {}),
+            },
+            body: JSON.stringify({
+              code,
+              device: 'fyaisa-client',
+              ...(opts.appId ? {appId: opts.appId} : {}),
+            }),
           });
           if (ok.ok) {
             const j = await ok.json();
-            return {host, token: j.token};
+            return {host, token: j.token, ...(opts.appId ? {appId: opts.appId} : {})};
           }
+          const body = await ok.json().catch(() => ({} as any));
+          throw new FyaisaError(
+            ok.status,
+            body.error || `pairing approval failed (HTTP ${ok.status})`,
+            body.code,
+          );
         }
       }
       await new Promise<void>((r) => setTimeout(r, pollMs));

@@ -340,24 +340,55 @@ const DEBLOAT_KEEP = new Set([
 ]);
 
 /**
- * Compare two dotted version strings: -1, 0, or 1. Handles pre-release
- * suffixes the same way as the CLI's version_cmp.
+ * Compare two dotted version strings: -1, 0, or 1. Numeric core parts and
+ * numeric pre-release identifiers compare as numbers, so 2.0.0-10 is newer
+ * than 2.0.0-2. Build metadata after '+' is ignored, per semver.
  */
 const versionCmp = (a: string, b: string): number => {
-  const pa = String(a).split('.');
-  const pb = String(b).split('.');
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const da = (parseInt(pa[i]?.split('-')[0], 10) || 0);
-    const db = (parseInt(pb[i]?.split('-')[0], 10) || 0);
+  const parse = (raw: string) => {
+    const main = String(raw || '').trim().split('+')[0];
+    const dash = main.indexOf('-');
+    const core = dash < 0 ? main : main.slice(0, dash);
+    const pre = dash < 0 ? '' : main.slice(dash + 1);
+    return {
+      nums: core.split('.').map(part => {
+        const n = parseInt(part, 10);
+        return Number.isFinite(n) ? n : 0;
+      }),
+      pre: pre ? pre.split('.') : [],
+      hasPre: pre.length > 0,
+    };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.nums.length, pb.nums.length); i++) {
+    const da = pa.nums[i] ?? 0;
+    const db = pb.nums[i] ?? 0;
     if (da < db) return -1;
     if (da > db) return 1;
-    // Numeric parts equal: compare pre-release suffixes lexicographically.
-    const sa = pa[i]?.includes('-') ? pa[i].split('-').slice(1).join('-') : '';
-    const sb = pb[i]?.includes('-') ? pb[i].split('-').slice(1).join('-') : '';
-    if (sa && !sb) return -1; // a has a suffix, b doesn't → a is older
-    if (!sa && sb) return 1;  // b has a suffix, a doesn't → b is older
-    if (sa && sb && sa < sb) return -1;
-    if (sa && sb && sa > sb) return 1;
+  }
+  if (!pa.hasPre && !pb.hasPre) return 0;
+  if (!pa.hasPre) return 1;
+  if (!pb.hasPre) return -1;
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+    const ia = pa.pre[i];
+    const ib = pb.pre[i];
+    if (ia === undefined) return -1; // shorter prerelease set is older
+    if (ib === undefined) return 1;
+    const na = /^\d+$/.test(ia);
+    const nb = /^\d+$/.test(ib);
+    if (na && nb) {
+      // Compare numeric identifiers without losing precision to Number().
+      const da = ia.replace(/^0+/, '') || '0';
+      const db = ib.replace(/^0+/, '') || '0';
+      if (da.length !== db.length) return da.length < db.length ? -1 : 1;
+      if (da !== db) return da < db ? -1 : 1;
+    } else if (na !== nb) {
+      return na ? -1 : 1; // numeric identifiers sort below alphanumeric ones
+    } else {
+      if (ia < ib) return -1;
+      if (ia > ib) return 1;
+    }
   }
   return 0;
 };
@@ -423,29 +454,15 @@ const Hub = () => {
   const screenKeyRef = useRef<string | null>(null);
   const [pageKey, setPageKey] = useState(0);
 
-  // Focus ring pulse for the currently focused control.
-  const focusPulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(focusPulse, {
-          toValue: 1,
-          duration: 1400,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(focusPulse, {
-          toValue: 0,
-          duration: 1400,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    ).start();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  // The launch intro owns the screen first; true for the rest of the session
+  // once it has finished or been skipped.
+  const [introDone, setIntroDone] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // When the screen changes, crossfade out and back in.
+  // When the screen changes, crossfade out and back in. Declared after
+  // selectedId so the effect doesn't read a block-scoped value too early.
   useEffect(() => {
     const key = selectedId ?? 'root';
     if (screenKeyRef.current !== null && screenKeyRef.current !== key) {
@@ -469,15 +486,11 @@ const Hub = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, pageOpacity]);
 
-  const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // The launch intro owns the screen first; true for the rest of the session
-  // once it has finished or been skipped.
-  const [introDone, setIntroDone] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   // Full-screen screenshot preview URL, or null when no preview is open.
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
+  // Which main-menu row is currently pressed. One unconditional hook instead of
+  // a per-row hook, so adding/removing the hub-update row can't shift hook order.
+  const [pressedMenuId, setPressedMenuId] = useState<string | null>(null);
   // Apps menu search: the query string, plus whether the on-screen keyboard is
   // up (a TV has no system keyboard; typing is a grid of keys you D-pad over).
   const [query, setQuery] = useState('');
@@ -544,6 +557,82 @@ const Hub = () => {
 
   const base = pair.host ? `http://${pair.host}:${BRIDGE_PORT}` : null;
 
+  // Async work started by a poll or a button outlives the render that created
+  // it. These refs let every continuation drop stale results and let unmount
+  // clear every timer the UI started.
+  const mountedRef = useRef(true);
+  const pairStatusRef = useRef(pair.status);
+  pairStatusRef.current = pair.status;
+  const pairGenRef = useRef(0);
+  const installGenRef = useRef(0);
+  const hubGenRef = useRef(0);
+  const updateAllGenRef = useRef(0);
+  const intervalsRef = useRef<Set<ReturnType<typeof setInterval>>>(new Set());
+  const timeoutsRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const activityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const updateAllDoneTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sleepResolversRef = useRef<Set<() => void>>(new Set());
+  const pairPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const installPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const hubPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const trackInterval = useCallback((fn: () => void, ms: number) => {
+    const id = setInterval(fn, ms);
+    intervalsRef.current.add(id);
+    return id;
+  }, []);
+  const stopInterval = useCallback((id: ReturnType<typeof setInterval> | null | undefined) => {
+    if (id == null) return;
+    clearInterval(id);
+    intervalsRef.current.delete(id);
+  }, []);
+  const trackTimeout = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timeoutsRef.current.delete(id);
+      fn();
+    }, ms);
+    timeoutsRef.current.add(id);
+    return id;
+  }, []);
+  const stopTimeout = useCallback((id: ReturnType<typeof setTimeout> | null | undefined) => {
+    if (id == null) return;
+    clearTimeout(id);
+    timeoutsRef.current.delete(id);
+  }, []);
+
+  // A delay used by update-all resolves on unmount so the loop can wind down
+  // instead of holding a pending promise after its component is gone.
+  const sleep = useCallback(
+    (ms: number) =>
+      new Promise<void>(resolve => {
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        let settled = false;
+        const done = () => {
+          if (settled) return;
+          settled = true;
+          sleepResolversRef.current.delete(done);
+          if (timer !== null) stopTimeout(timer);
+          resolve();
+        };
+        sleepResolversRef.current.add(done);
+        timer = trackTimeout(done, ms);
+      }),
+    [stopTimeout, trackTimeout],
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      sleepResolversRef.current.forEach(done => done());
+      sleepResolversRef.current.clear();
+      intervalsRef.current.forEach(clearInterval);
+      intervalsRef.current.clear();
+      timeoutsRef.current.forEach(clearTimeout);
+      timeoutsRef.current.clear();
+    };
+  }, []);
+
   const apps = useMemo(() => {
     const all = catalog?.apps ?? [];
     // FYAISA updates last: updating it closes the hub, so anything after it
@@ -588,7 +677,7 @@ const Hub = () => {
         return 'install';
       }
       const v = versions[a.id];
-      return v !== undefined && v === a.version ? 'current' : 'update';
+      return v !== undefined && versionCmp(v, a.version ?? '') === 0 ? 'current' : 'update';
     },
     [installed, versions],
   );
@@ -735,6 +824,7 @@ const Hub = () => {
       if (!r.ok || !out) {
         return; // vda link down; keep the last snapshot
       }
+      if (!mountedRef.current || pairStatusRef.current !== 'paired') return;
       setInstalled(
         new Set(
           out
@@ -749,7 +839,9 @@ const Hub = () => {
       // Either way this attempt is over. A read that failed still ends the
       // "Syncing…" state — better to show the last known status than to hide
       // every button behind a spinner that never clears.
-      setInstalledLoaded(true);
+      if (mountedRef.current && pairStatusRef.current === 'paired') {
+        setInstalledLoaded(true);
+      }
     }
   }, [pair.status, bridgeFetch]);
 
@@ -758,11 +850,14 @@ const Hub = () => {
   // hammering the bridge with vega calls when nothing is happening on the couch.
   const activePollingRef = useRef(false);
   const bumpActivity = useCallback(() => {
+    if (!mountedRef.current) return;
     activePollingRef.current = true;
-    setTimeout(() => {
+    if (activityTimerRef.current !== null) stopTimeout(activityTimerRef.current);
+    activityTimerRef.current = trackTimeout(() => {
+      activityTimerRef.current = null;
       activePollingRef.current = false;
     }, 60000); // stay "active" for 60s after any user action
-  }, []);
+  }, [stopTimeout, trackTimeout]);
 
   useEffect(() => {
     // A fresh pairing (or a reconnect) has read nothing yet, so hold the buttons
@@ -773,23 +868,23 @@ const Hub = () => {
       return;
     }
     refreshInstalled();
-    let intervalId: ReturnType<typeof setInterval>;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
     const schedule = () => {
-      if (intervalId) clearInterval(intervalId);
-      intervalId = setInterval(() => {
-        refreshInstalled();
+      if (intervalId) stopInterval(intervalId);
+      intervalId = trackInterval(() => {
+        if (mountedRef.current) refreshInstalled();
       }, activePollingRef.current ? 30000 : 120000);
     };
     schedule();
     // Reschedule whenever activity changes.
-    const activityWatcher = setInterval(() => {
-      schedule();
+    const activityWatcher = trackInterval(() => {
+      if (mountedRef.current) schedule();
     }, 60000);
     return () => {
-      if (intervalId) clearInterval(intervalId);
-      clearInterval(activityWatcher);
+      if (intervalId) stopInterval(intervalId);
+      stopInterval(activityWatcher);
     };
-  }, [pair.status, refreshInstalled]);
+  }, [pair.status, refreshInstalled, stopInterval, trackInterval]);
 
   /**
    * Read the installed version of each installed catalog app, over the bridge
@@ -829,6 +924,7 @@ const Hub = () => {
           }
         }
       }
+      if (!mountedRef.current || pairStatusRef.current !== 'paired') return;
       setVersions(prev => {
         const next = {...prev};
         for (const id of ids) {
@@ -862,7 +958,7 @@ const Hub = () => {
     }
     let cancelled = false;
     refreshVersions(installedKey.split(',')).finally(() => {
-      if (!cancelled) {
+      if (!cancelled && mountedRef.current) {
         setStatusKnown(true);
       }
     });
@@ -909,14 +1005,22 @@ const Hub = () => {
    */
   const pairWithHost = useCallback(
     async (rawHost: string) => {
+      const gen = ++pairGenRef.current;
+      const live = () => mountedRef.current && gen === pairGenRef.current;
+      if (pairPollRef.current) stopInterval(pairPollRef.current);
+      pairPollRef.current = null;
       const host = normalizeHost(rawHost);
       if (!hostFilled(host)) {
-        setPair(p => ({...p, status: 'error', message: 'Enter your computer’s address first'}));
+        if (live()) {
+          setPair(p => ({...p, status: 'error', message: 'Enter your computer’s address first'}));
+        }
         return;
       }
       const url = `http://${host}:${BRIDGE_PORT}`;
       try {
-        setPair(p => ({...p, host, status: 'requesting', message: 'Requesting code…'}));
+        if (live()) {
+          setPair(p => ({...p, host, status: 'requesting', message: 'Requesting code…'}));
+        }
         // Reachability check: GET /ping, which is tokenless. /catalog would 401
         // here since no valid token exists yet, so pairing could never start.
         // /pair/request and /pair/approve are tokenless too, and /pair/approve
@@ -927,26 +1031,36 @@ const Hub = () => {
             throw new Error(`HTTP ${res.status}`);
           }
         } catch (e: any) {
-          setPair(p => ({
-            ...p,
-            status: 'error',
-            message: `ElevSH unreachable at ${url} (${e?.message || e}). Start \`fyaisa connect --lan\` on the PC.`,
-          }));
+          if (live()) {
+            setPair(p => ({
+              ...p,
+              status: 'error',
+              message: `ElevSH unreachable at ${url} (${e?.message || e}). Start \`fyaisa connect --lan\` on the PC.`,
+            }));
+          }
           return;
         }
+        if (!live()) return;
         const {code} = await pairFetch(host, '/pair/request', {method: 'POST'});
+        if (!live()) return;
         setPair(p => ({...p, host, code, status: 'awaiting', message: `On the PC: fyaisa approve ${code}`}));
         // Poll for approval; the bridge approves once the user types the code.
-        const iv = setInterval(async () => {
+        let polling = false;
+        const iv = trackInterval(async () => {
+          if (!live() || polling) return;
+          polling = true;
           try {
             const st = await pairFetch(host, `/pair/status?code=${code}`);
+            if (!live()) return;
             if (st.approved) {
-              clearInterval(iv);
+              stopInterval(iv);
+              pairPollRef.current = null;
               const ok = await pairFetch(host, '/pair/approve', {
                 method: 'POST',
-                body: JSON.stringify({code, device: 'fyaisa-app'}),
+                body: JSON.stringify({code, device: 'fyaisa-app', appId: HUB_APP_ID}),
               });
-              savePair({host, token: ok.token});
+              if (!live()) return;
+              await savePair({host, token: ok.token});
               setPair(p => ({
                 ...p,
                 host,
@@ -955,18 +1069,26 @@ const Hub = () => {
                 message: 'Connected',
               }));
               console.info('[FYAISA] paired with bridge');
-              setPcInfo(await describePc(new Fyaisa(host, ok.token, BRIDGE_PORT, HUB_APP_ID)));
+              const info = await describePc(new Fyaisa(host, ok.token, BRIDGE_PORT, HUB_APP_ID));
+              if (live()) setPcInfo(info);
             }
           } catch (e: any) {
-            clearInterval(iv);
+            if (!live()) return;
+            stopInterval(iv);
+            pairPollRef.current = null;
             setPair(p => ({...p, status: 'error', message: e.message}));
+          } finally {
+            polling = false;
           }
         }, PAIR_POLL_MS);
+        pairPollRef.current = iv;
       } catch (e: any) {
-        setPair(p => ({...p, status: 'error', message: e.message}));
+        if (live()) {
+          setPair(p => ({...p, status: 'error', message: e.message}));
+        }
       }
     },
-    [pairFetch],
+    [pairFetch, stopInterval, trackInterval],
   );
 
   /** Pair with the address in the manual box. */
@@ -996,49 +1118,67 @@ const Hub = () => {
     }
 
     for (const host of candidates) {
+      if (!mountedRef.current) return;
       // Race-based deadline: AbortController is not in this SDK's TS libs.
+      let deadlineId: ReturnType<typeof setTimeout> | null = null;
       const ok = await Promise.race([
         fetch(`http://${host}:${BRIDGE_PORT}/ping`)
           .then(r => r.ok)
           .catch(() => false),
-        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2500)),
+        new Promise<boolean>(resolve => {
+          deadlineId = trackTimeout(() => resolve(false), 2500);
+        }),
       ]);
+      stopTimeout(deadlineId);
+      if (!mountedRef.current) return;
       if (!ok) continue;
       console.info(`[FYAISA] discovered ElevSH on ${host}`);
       await pairWithHost(host);
       return;
     }
 
-    setPair(p => ({
-      ...p,
-      status: 'error',
-      message:
-        'No ElevSH found. On the PC run `fyaisa connect --lan`; if the TV is not linked to the Vega CLI, type the "reachable http://..." address it prints below.',
-    }));
-  }, [pairWithHost]);
+    if (mountedRef.current) {
+      setPair(p => ({
+        ...p,
+        status: 'error',
+        message:
+          'No ElevSH found. On the PC run `fyaisa connect --lan`; if the TV is not linked to the Vega CLI, type the "reachable http://..." address it prints below.',
+      }));
+    }
+  }, [pairWithHost, stopTimeout, trackTimeout]);
 
   /**
    * Queue a build+install over ElevSH and poll the job.
    */
   const requestInstall = useCallback(
     async (appId: string) => {
+      const gen = ++installGenRef.current;
+      const live = () => mountedRef.current && gen === installGenRef.current;
+      if (installPollRef.current) stopInterval(installPollRef.current);
+      installPollRef.current = null;
       bumpActivity();
       try {
         const {jobId} = await bridgeFetch('/install', {
           method: 'POST',
           body: JSON.stringify({appId}),
         });
+        if (!live()) return;
         setPair(p => ({
           ...p,
           job: {id: jobId, status: 'queued', log: []},
           message: `Installing ${appId}…`,
         }));
-        const iv = setInterval(async () => {
+        let polling = false;
+        const iv = trackInterval(async () => {
+          if (!live() || polling) return;
+          polling = true;
           try {
             const job = await bridgeFetch(`/job?id=${jobId}`);
+            if (!live()) return;
             setPair(p => ({...p, job}));
             if (['done', 'error'].includes(job.status)) {
-              clearInterval(iv);
+              stopInterval(iv);
+              installPollRef.current = null;
               if (job.status === 'done') {
                 // Re-read the status; the buttons go back to "Syncing…" while
                 // that happens so nobody taps an install the job just changed.
@@ -1048,15 +1188,22 @@ const Hub = () => {
               }
             }
           } catch (e: any) {
-            clearInterval(iv);
+            if (!live()) return;
+            stopInterval(iv);
+            installPollRef.current = null;
             setPair(p => ({...p, status: 'error', message: e.message}));
+          } finally {
+            polling = false;
           }
         }, PAIR_POLL_MS);
+        installPollRef.current = iv;
       } catch (e: any) {
-        setPair(p => ({...p, status: 'error', message: e.message}));
+        if (live()) {
+          setPair(p => ({...p, status: 'error', message: e.message}));
+        }
       }
     },
-    [bridgeFetch, refreshInstalled],
+    [bridgeFetch, refreshInstalled, bumpActivity, stopInterval, trackInterval],
   );
 
   /**
@@ -1064,39 +1211,57 @@ const Hub = () => {
    * over ElevSH, exactly like any other app update.
    */
   const updateHub = useCallback(async () => {
+    const gen = ++hubGenRef.current;
+    const live = () => mountedRef.current && gen === hubGenRef.current;
+    if (hubPollRef.current) stopInterval(hubPollRef.current);
+    hubPollRef.current = null;
     bumpActivity();
     try {
       const {jobId} = await bridgeFetch('/install', {
         method: 'POST',
         body: JSON.stringify({appId: 'app.fyaisa.hub.main'}),
       });
+      if (!live()) return;
       setPair(p => ({
         ...p,
         job: {id: jobId, status: 'queued', log: []},
         message: `Updating FYAISA hub to v${hubUpdateVersion}…`,
       }));
-      const iv = setInterval(async () => {
+      let polling = false;
+      const iv = trackInterval(async () => {
+        if (!live() || polling) return;
+        polling = true;
         try {
           const job = await bridgeFetch(`/job?id=${jobId}`);
+          if (!live()) return;
           setPair(p => ({...p, job}));
           if (job.status === 'done') {
-            clearInterval(iv);
+            stopInterval(iv);
+            hubPollRef.current = null;
             setHubUpdateAvailable(false);
             setHubUpdateVersion(null);
             setPair(p => ({...p, message: 'FYAISA hub updated — relaunch to apply.'}));
           } else if (job.status === 'error') {
-            clearInterval(iv);
+            stopInterval(iv);
+            hubPollRef.current = null;
             setPair(p => ({...p, status: 'error', message: 'Hub update failed.'}));
           }
         } catch (e: any) {
-          clearInterval(iv);
+          if (!live()) return;
+          stopInterval(iv);
+          hubPollRef.current = null;
           setPair(p => ({...p, status: 'error', message: e.message}));
+        } finally {
+          polling = false;
         }
       }, PAIR_POLL_MS);
+      hubPollRef.current = iv;
     } catch (e: any) {
-      setPair(p => ({...p, status: 'error', message: e.message}));
+      if (live()) {
+        setPair(p => ({...p, status: 'error', message: e.message}));
+      }
     }
-  }, [bridgeFetch, hubUpdateVersion]);
+  }, [bridgeFetch, hubUpdateVersion, bumpActivity, stopInterval, trackInterval]);
 
   /**
    * Rebuild and reinstall every installed app, one bridge job at a time.
@@ -1111,27 +1276,33 @@ const Hub = () => {
       }));
       return;
     }
-    bumpActivity();
     if (updateAll || !updatable.length) {
       return;
     }
+    const gen = ++updateAllGenRef.current;
+    const live = () => mountedRef.current && gen === updateAllGenRef.current;
+    bumpActivity();
     setUpdateAll({done: 0, total: updatable.length, current: ''});
     try {
       for (let i = 0; i < updatable.length; i++) {
+        if (!live()) return;
         const a = updatable[i];
         setUpdateAll({done: i, total: updatable.length, current: a.name});
         const {jobId} = await bridgeFetch('/install', {
           method: 'POST',
           body: JSON.stringify({appId: a.id}),
         });
+        if (!live()) return;
         setPair(p => ({
           ...p,
           job: {id: jobId, status: 'queued', log: []},
           message: `Updating ${a.name}…`,
         }));
         for (;;) {
-          await new Promise<void>(r => setTimeout(r, PAIR_POLL_MS));
+          await sleep(PAIR_POLL_MS);
+          if (!live()) return;
           const job = await bridgeFetch(`/job?id=${jobId}`);
+          if (!live()) return;
           setPair(p => ({...p, job}));
           if (job.status === 'done') {
             break;
@@ -1146,16 +1317,36 @@ const Hub = () => {
           }
         }
       }
-      setUpdateAll({done: updatable.length, total: updatable.length, current: ''});
+      if (live()) {
+        setUpdateAll({done: updatable.length, total: updatable.length, current: ''});
+      }
     } catch (e: any) {
-      setPair(p => ({...p, status: 'error', message: e.message}));
+      if (live()) {
+        setPair(p => ({...p, status: 'error', message: e.message}));
+      }
     } finally {
-      setTimeout(() => setUpdateAll(null), 4000);
-      setStatusKnown(false);
-      refreshInstalled();
-      setVersionsTick(t => t + 1);
+      if (live()) {
+        if (updateAllDoneTimerRef.current !== null) stopTimeout(updateAllDoneTimerRef.current);
+        updateAllDoneTimerRef.current = trackTimeout(() => {
+          updateAllDoneTimerRef.current = null;
+          if (mountedRef.current) setUpdateAll(null);
+        }, 4000);
+        setStatusKnown(false);
+        refreshInstalled();
+        setVersionsTick(t => t + 1);
+      }
     }
-  }, [pair.status, updatable, bridgeFetch, refreshInstalled, updateAll]);
+  }, [
+    pair.status,
+    updatable,
+    bridgeFetch,
+    refreshInstalled,
+    updateAll,
+    bumpActivity,
+    sleep,
+    stopTimeout,
+    trackTimeout,
+  ]);
 
   /** Open an installed app on the Fire TV over ElevSH. */
   const openApp = useCallback(
@@ -1533,15 +1724,15 @@ const Hub = () => {
     async (quiet = false) => {
       // A quiet pass is the background one: no spinner, and a failed fetch
       // keeps whatever we're showing instead of dropping to the built-in list.
-      if (!quiet) {
+      if (!quiet && mountedRef.current) {
         setLoading(true);
         setError(null);
       }
+      let abortTimer: ReturnType<typeof setTimeout> | null = null;
       try {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 15000);
+        abortTimer = trackTimeout(() => controller.abort(), 15000);
         const res = await fetch(CATALOG_URL, {signal: controller.signal});
-        clearTimeout(timer);
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
@@ -1549,54 +1740,51 @@ const Hub = () => {
         if (!data || !Array.isArray(data.apps)) {
           throw new Error('malformed catalog');
         }
+        if (!mountedRef.current) return;
         setCatalog(data);
         setError(null);
         console.info(`[FYAISA] catalog loaded: ${data.apps.length} app(s)`);
-        // Auto-update check: does the catalog publish a newer hub version?
-        const hubEntry = (data.apps || []).find((a: any) => a.id === 'app.fyaisa.hub.main');
-        if (hubEntry?.version && hubEntry.version !== HUB_VERSION) {
-          // Compare versions: if catalog version > installed version, offer update.
-          const cmp = versionCmp(hubEntry.version, HUB_VERSION);
-          if (cmp > 0) {
-            setHubUpdateAvailable(true);
-            setHubUpdateVersion(hubEntry.version);
-          } else {
-            setHubUpdateAvailable(false);
-            setHubUpdateVersion(null);
-          }
-        } else {
-          setHubUpdateAvailable(false);
-          setHubUpdateVersion(null);
-        }
       } catch (e: any) {
         const msg = (e && e.message) || String(e);
         console.error(`[FYAISA] catalog fetch failed: ${msg}`);
-        if (!quiet) {
+        if (!quiet && mountedRef.current) {
           setError(msg);
           setCatalog(FALLBACK_CATALOG);
         }
       } finally {
-        if (!quiet) {
-          setLoading(false);
+        stopTimeout(abortTimer);
+        if (mountedRef.current) {
+          if (!quiet) setLoading(false);
+          hideSplash();
         }
-        hideSplash();
       }
     },
-    [hideSplash],
+    [hideSplash, stopTimeout, trackTimeout],
   );
+
+  // Derive the hub-update badge from the current catalog, not from whatever the
+  // last fetch happened to write. A background refresh can replace the catalog
+  // (or drop the hub entry) without a button press; the badge follows it.
+  useEffect(() => {
+    const hubEntry = (catalog?.apps ?? []).find(a => a.id === HUB_APP_ID);
+    const version = hubEntry?.version;
+    const available = !!version && versionCmp(version, HUB_VERSION) > 0;
+    setHubUpdateAvailable(available);
+    setHubUpdateVersion(available ? version! : null);
+  }, [catalog]);
 
   useEffect(() => {
     loadCatalog();
-    // Re-read the catalog on its own so apps added to (or removed from) the
-    // repo show up here without a hub update or a manual Refresh.
     // Re-read the catalog on its own so apps added to (or removed from) the
     // repo show up here without a hub update or a manual Refresh. Background
     // refetch is infrequent (10 min); the explicit Refresh button and app
     // launch do full fetches, so the couch experience stays snappy without
     // hammering GitHub.
-    const iv = setInterval(() => loadCatalog(true), 10 * 60 * 1000);
-    return () => clearInterval(iv);
-  }, [loadCatalog]);
+    const iv = trackInterval(() => {
+      if (mountedRef.current) loadCatalog(true);
+    }, 10 * 60 * 1000);
+    return () => stopInterval(iv);
+  }, [loadCatalog, stopInterval, trackInterval]);
 
   // Remote navigation is handled natively: Pressable rows take D-pad focus
   // (the first row seeded with hasTVPreferredFocus), and Back is caught through
@@ -1605,6 +1793,10 @@ const Hub = () => {
   // "ReferenceError: Property 'document' doesn't exist").
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (screenshotPreview) {
+        setScreenshotPreview(null); // preview owns Back until it is closed
+        return true;
+      }
       if (!introDone) {
         setIntroDone(true); // first Back skips the intro, it doesn't close us
         return true;
@@ -1624,7 +1816,7 @@ const Hub = () => {
       return true;
     });
     return () => sub.remove();
-  }, [selectedId, keyboardOpen, introDone]);
+  }, [selectedId, keyboardOpen, introDone, screenshotPreview]);
 
   // The intro plays first and owns the whole screen; the menus below don't
   // mount until it's gone, so nothing behind it can steal D-pad focus.
@@ -1643,6 +1835,13 @@ const Hub = () => {
         />
         <View style={styles.previewCaption}>
           <Text style={styles.previewTitle}>Screenshot preview</Text>
+          <Pressable
+            hasTVPreferredFocus
+            focusable
+            style={focusable(styles.previewCloseBtn)}
+            onPress={() => setScreenshotPreview(null)}>
+            <Text style={styles.previewCloseText}>Close preview</Text>
+          </Pressable>
           <Text style={styles.previewHint}>OK or Back → return</Text>
         </View>
       </View>
@@ -1694,7 +1893,6 @@ const Hub = () => {
         </View>
         <ScrollView contentContainerStyle={styles.list}>
           {submenus.map((m, i) => {
-            const [menuPressed, setMenuPressed] = React.useState(false);
             return (
               <Pressable
                 key={m.id}
@@ -1704,10 +1902,10 @@ const Hub = () => {
                   styles.row,
                   focused && styles.rowFocused,
                   focused && styles.focused,
-                  menuPressed && {transform: [{scale: 0.96}]},
+                  pressedMenuId === m.id && {transform: [{scale: 0.96}]},
                 ]}
-                onPressIn={() => setMenuPressed(true)}
-                onPressOut={() => setMenuPressed(false)}
+                onPressIn={() => setPressedMenuId(m.id)}
+                onPressOut={() => setPressedMenuId(prev => (prev === m.id ? null : prev))}
                 onPress={() => {
                   if (m.id === '__hubupdate__') {
                     updateHub();
@@ -3001,7 +3199,7 @@ const SwatchGrid = ({
   );
 };
 
-const makeStyles = (t: ResolvedTheme) => {
+const makeStyles = (t: ResolvedTheme, focusPulse: Animated.Value) => {
   // A button's resting border, so "Outline" reads as outlined and the others
   // stay flush with the surface (a transparent 4px border keeps layout stable
   // when the focus ring appears).
@@ -3174,7 +3372,16 @@ const makeStyles = (t: ResolvedTheme) => {
   previewHint: {
     color: '#9e9e9e',
     fontSize: 16,
+    marginTop: 12,
   },
+  previewCloseBtn: {
+    backgroundColor: t.accent,
+    borderRadius: 8,
+    ...buttonBase,
+    paddingHorizontal: 28,
+    paddingVertical: 12,
+  },
+  previewCloseText: {color: t.accentText, fontSize: 18, fontWeight: '600'},
   backBtn: {
     marginTop: 28,
     alignSelf: 'flex-start',
@@ -3397,14 +3604,15 @@ const makeStyles = (t: ResolvedTheme) => {
   toolOutText: {color: t.textBody, fontSize: 13, fontFamily: 'monospace', lineHeight: 19},
   focused: {
     borderWidth: 4,
-    borderColor: t.focus,
     // Animated pulse: ring breathes between surface and focus colour.
-    ...(focusPulse && {
-      borderColor: focusPulse.interpolate({
-        inputRange: [0, 1],
-        outputRange: [t.surface, t.focus],
-      }),
-    }),
+    // Cast the interpolation at the boundary; RN's style types don't model
+    // AnimatedInterpolation values even though the runtime does.
+    borderColor: focusPulse
+      ? (focusPulse.interpolate({
+          inputRange: [0, 1],
+          outputRange: [t.surface, t.focus],
+        }) as any)
+      : (t.focus as any),
     // "Flat" keeps a crisp ring; "glow" and "outline" add the halo.
     ...(t.buttonEffect === 'flat'
       ? {}
@@ -3492,10 +3700,39 @@ const Shell = () => {
   );
 };
 
-export const App = () => (
-  <ThemeProvider makeStyles={makeStyles}>
-    <Shell />
-  </ThemeProvider>
-);
+export const App = () => {
+  // The focus ring's pulse is shared by every stylesheet generation. It is
+  // created here, above ThemeProvider, so makeStyles never reaches for a value
+  // owned by a component that mounts later (or by a stale module-level ref).
+  const focusPulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(focusPulse, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(focusPulse, {
+          toValue: 0,
+          duration: 1400,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [focusPulse]);
+
+  const stylesForTheme = useCallback((t: ResolvedTheme) => makeStyles(t, focusPulse), [focusPulse]);
+
+  return (
+    <ThemeProvider makeStyles={stylesForTheme}>
+      <Shell />
+    </ThemeProvider>
+  );
+};
 
 export default App;
