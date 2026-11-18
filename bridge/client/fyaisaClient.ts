@@ -71,23 +71,22 @@ export class Fyaisa {
   }
 
   private async req(path: string, init?: any): Promise<any> {
+    const headers = new Headers(init && init.headers ? init.headers : undefined);
+    // Set ours last: a caller's init.headers must not overwrite the token or
+    // drop the app id the bridge uses for its allow/deny gate.
+    headers.set('X-FYAISA-Token', this.token);
+    headers.set('Content-Type', 'application/json');
+    if (this.appId) headers.set('X-FYAISA-App', this.appId);
+    else headers.delete('X-FYAISA-App');
     let res: Response;
     try {
-      res = await fetch(this.url(path), {
-        ...init,
-        headers: {
-          'X-FYAISA-Token': this.token,
-          'Content-Type': 'application/json',
-          ...(this.appId ? {'X-FYAISA-App': this.appId} : {}),
-          ...(init && init.headers ? init.headers : {}),
-        },
-      });
+      res = await fetch(this.url(path), {...init, headers});
     } catch (e: any) {
       throw new FyaisaError(0, `bridge unreachable at ${this.host}:${this.port} (${e?.message || e})`);
     }
     const body = await res.json().catch(() => ({} as any));
     if (!res.ok) {
-      throw new FyaisaError(res.status, body.error || `HTTP ${res.status}`, body.code);
+      throw new FyaisaError(res.status, body?.error || `HTTP ${res.status}`, body?.code);
     }
     return body;
   }
@@ -177,18 +176,22 @@ export class Fyaisa {
    * {appId, status: 'allow' | 'deny' | 'pending' | 'none'} — used by apps
    * before they hold a pairing.
    */
-  static async accessStatus(host: string, appId: string, port: number = 47821): Promise<{status: string}> {
+  static async accessStatus(
+    host: string,
+    appId: string,
+    port: number = 47821,
+  ): Promise<{appId?: string; status: string}> {
     let res: Response;
     try {
       res = await fetch(`http://${host}:${port}/access/status?appId=${encodeURIComponent(appId)}`);
     } catch (e: any) {
       throw new FyaisaError(0, `bridge unreachable at ${host}:${port} (${e?.message || e})`);
     }
+    const body = await res.json().catch(() => ({} as any));
     if (!res.ok) {
-      const body = await res.json().catch(() => ({} as any));
-      throw new FyaisaError(res.status, body.error || `HTTP ${res.status}`, body.code);
+      throw new FyaisaError(res.status, body?.error || `HTTP ${res.status}`, body?.code);
     }
-    return res.json();
+    return {appId: body?.appId ?? appId, status: String(body?.status || 'none')};
   }
 
   // ---- pairing (no token yet) ----------------------------------------------
@@ -197,13 +200,13 @@ export class Fyaisa {
    * Ask the bridge for a pairing code. Pass appId so the bridge knows which
    * app is asking: an allowed app (allowed in FYAISA → ElevSH) pairing from
    * the Fire TV's own address is auto-approved — no code typing anywhere.
-   * Resolves to {code, expiresIn, autoApproved}.
+   * Resolves to {code, expiresIn, autoApproved, appId?}.
    */
   static async requestCode(
     host: string,
     port: number = 47821,
     appId?: string,
-  ): Promise<{code: string; expiresIn: number; autoApproved?: boolean}> {
+  ): Promise<{code: string; expiresIn: number; autoApproved?: boolean; appId?: string}> {
     let res: Response;
     try {
       res = await fetch(`http://${host}:${port}/pair/request`, {
@@ -213,10 +216,11 @@ export class Fyaisa {
     } catch (e: any) {
       throw new FyaisaError(0, `bridge unreachable at ${host}:${port} (${e?.message || e})`);
     }
+    const body = await res.json().catch(() => ({} as any));
     if (!res.ok) {
-      throw new FyaisaError(res.status, `pairing request failed (HTTP ${res.status})`);
+      throw new FyaisaError(res.status, body?.error || `pairing request failed (HTTP ${res.status})`, body?.code);
     }
-    return res.json();
+    return {...body, ...(appId ? {appId} : {})};
   }
 
   /**
@@ -258,22 +262,33 @@ export class Fyaisa {
       } catch {
         res = null; // PC may be restarting the bridge; keep polling
       }
-      if (res && res.ok) {
-        const st = await res.json();
-        if (st.approved) {
+      if (res) {
+        const st = await res.json().catch(() => ({} as any));
+        if (!res.ok) {
+          const codeName = st?.code || (res.status === 410 ? 'code_expired' : res.status === 404 ? 'unknown_code' : undefined);
+          throw new FyaisaError(res.status, st?.error || `pairing status failed (HTTP ${res.status})`, codeName);
+        }
+        if (st?.approved) {
+          const headers: Record<string, string> = {'Content-Type': 'application/json'};
+          if (opts.appId) headers['X-FYAISA-App'] = opts.appId;
           const ok = await fetch(`http://${host}:${port}/pair/approve`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers,
             body: JSON.stringify({code, device: 'fyaisa-client'}),
           });
-          if (ok.ok) {
-            const j = await ok.json();
-            return {host, token: j.token};
+          const j = await ok.json().catch(() => ({} as any));
+          if (ok.ok && typeof j.token === 'string' && j.token) {
+            return {host, token: j.token, ...(opts.appId ? {appId: opts.appId} : {})};
           }
+          throw new FyaisaError(
+            ok.status || 500,
+            j?.error || 'pairing token exchange failed',
+            j?.code || 'token_missing',
+          );
         }
       }
       await new Promise<void>((r) => setTimeout(r, pollMs));
     }
-    throw new FyaisaError(408, 'pairing timed out — the code was not approved in time');
+    throw new FyaisaError(408, 'pairing timed out — the code was not approved in time', 'pairing_timeout');
   }
 }

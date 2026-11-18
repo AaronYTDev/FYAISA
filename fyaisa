@@ -176,28 +176,79 @@ app_version() {
 }
 
 # Numeric dotted compare: -1, 0 or 1 for $1 against $2.
-# Handles pre-release suffixes: 1.0.0-beta < 1.0.0 < 1.0.0-rc1 < 1.0.1.
-# A segment's numeric prefix is compared first; on tie, a bare number beats
-# anything with a suffix, and suffixes compare lexicographically.
+# Semver order: numeric core identifiers compare as numbers; a prerelease
+# sorts below the release; numeric prerelease ids compare as numbers and sort
+# below alphanumeric ids (1.0.0-alpha.1 < 1.0.0-alpha.beta < 1.0.0).
+_vc_num_cmp() {
+  local x="$1" y="$2" z
+  z="${x%%[!0]*}"; x="${x#"$z"}"; [[ -n "$x" ]] || x=0
+  z="${y%%[!0]*}"; y="${y#"$z"}"; [[ -n "$y" ]] || y=0
+  (( ${#x} < ${#y} )) && { printf '%s' -1; return; }
+  (( ${#x} > ${#y} )) && { printf '%s' 1; return; }
+  [[ "$x" < "$y" ]] && { printf '%s' -1; return; }
+  [[ "$x" > "$y" ]] && { printf '%s' 1; return; }
+  printf '%s' 0
+}
+
+_vc_split() {
+  local v="$1" pre="" last num suffix
+  v="${v#[vV]}"      # tolerate a leading v
+  v="${v%%+*}"       # build metadata is ignored in semver order
+  if [[ "$v" == *-* ]]; then
+    pre="${v#*-}"
+    v="${v%%-*}"
+  fi
+  # Also handle the legacy attached form: 1.0.0rc1 -> core 1.0.0, pre rc1.
+  last="${v##*.}"
+  num="${last%%[!0-9]*}"
+  if [[ -n "$num" && "$num" != "$last" ]]; then
+    suffix="${last#"$num"}"
+    pre="${suffix}${pre:+.$pre}"
+    if [[ "$v" == *.* ]]; then v="${v%.*}.$num"; else v="$num"; fi
+  fi
+  VC_CORE="$v"
+  VC_PRE="${pre#.}"
+}
+
 version_cmp() {
-  local -a av bv; local i x y xs ys
-  IFS=. read -r -a av <<< "$1"
-  IFS=. read -r -a bv <<< "$2"
-  for ((i = 0; i < ${#av[@]} || i < ${#bv[@]}; i++)); do
-    x="${av[i]:-0}"; y="${bv[i]:-0}"
-    # Split numeric prefix from any pre-release suffix.
-    xs="${x//[!0-9]/}"; ys="${y//[!0-9]/}"
-    x=$((10#${xs:-0})); y=$((10#${ys:-0}))
-    (( x < y )) && { printf '%s' -1; return; }
-    (( x > y )) && { printf '%s' 1; return; }
-    # Numeric parts equal: a bare segment outranks one with a suffix.
-    if [[ "$x" != "$xs" || "$y" != "$ys" ]]; then
-      if [[ "$x" == "$xs" && "$y" != "$ys" ]]; then printf '%s' 1; return; fi
-      if [[ "$x" != "$xs" && "$y" == "$ys" ]]; then printf '%s' -1; return; fi
-      # Both have suffixes — compare them lexicographically.
-      local sx="${x#$xs}" sy="${y#$ys}"
-      if [[ "$sx" < "$sy" ]]; then printf '%s' -1; return; fi
-      if [[ "$sx" > "$sy" ]]; then printf '%s' 1; return; fi
+  local LC_ALL=C LC_COLLATE=C
+  local acore apre bcore bpre c
+  _vc_split "$1"; acore="$VC_CORE"; apre="$VC_PRE"
+  _vc_split "$2"; bcore="$VC_CORE"; bpre="$VC_PRE"
+
+  local -a ac bc ap bp
+  IFS='.' read -r -a ac <<< "$acore"
+  IFS='.' read -r -a bc <<< "$bcore"
+  local i n x y
+  n=$(( ${#ac[@]} > ${#bc[@]} ? ${#ac[@]} : ${#bc[@]} ))
+  for ((i = 0; i < n; i++)); do
+    x="${ac[i]:-0}"; y="${bc[i]:-0}"
+    c="$(_vc_num_cmp "$x" "$y")"
+    [[ "$c" != 0 ]] && { printf '%s' "$c"; return; }
+  done
+
+  if [[ -z "$apre" && -z "$bpre" ]]; then printf '%s' 0; return; fi
+  if [[ -z "$apre" ]]; then printf '%s' 1; return; fi
+  if [[ -z "$bpre" ]]; then printf '%s' -1; return; fi
+
+  IFS='.' read -r -a ap <<< "$apre"
+  IFS='.' read -r -a bp <<< "$bpre"
+  n=$(( ${#ap[@]} > ${#bp[@]} ? ${#ap[@]} : ${#bp[@]} ))
+  for ((i = 0; i < n; i++)); do
+    (( i >= ${#ap[@]} )) && { printf '%s' -1; return; }
+    (( i >= ${#bp[@]} )) && { printf '%s' 1; return; }
+    x="${ap[i]}"; y="${bp[i]}"
+    if [[ "$x" =~ ^[0-9]+$ && "$y" =~ ^[0-9]+$ ]]; then
+      c="$(_vc_num_cmp "$x" "$y")"
+      [[ "$c" != 0 ]] && { printf '%s' "$c"; return; }
+    elif [[ "$x" =~ ^[0-9]+$ ]]; then
+      printf '%s' -1; return
+    elif [[ "$y" =~ ^[0-9]+$ ]]; then
+      printf '%s' 1; return
+    elif [[ "$x" < "$y" ]]; then
+      printf '%s' -1; return
+    elif [[ "$x" > "$y" ]]; then
+      printf '%s' 1; return
     fi
   done
   printf '%s' 0
@@ -393,13 +444,14 @@ cmd_update() {
 
 cmd_uninstall() {
   [[ $# -ge 1 ]] || die "Usage: fyaisa uninstall <component-id>"
-  info "Uninstalling $1"
+  local id="$1"
+  info "Uninstalling $id"
   if [[ -n "$DEVICE_IP" ]]; then
-    vega device uninstall-app --appName "$1" --device "$DEVICE_IP"
+    vega device uninstall-app --appName "$id" --device "$DEVICE_IP" || die "Uninstall failed for $id"
   else
-    vega device uninstall-app --appName "$1"
+    vega device uninstall-app --appName "$id" || die "Uninstall failed for $id"
   fi
-  ok "Removed $1"
+  ok "Removed $id"
 }
 
 # ---------------------------------------------------------------------------
@@ -635,59 +687,124 @@ cmd_devices() {
 }
 
 cmd_add_app() {
-  [[ $# -ge 1 ]] || die "Usage: fyaisa add-app <name> [--template vegatube|snake|doom|fileexplorer]"
-  local name="$1"
-  local template="${2:-vegatube}"
+  local usage="Usage: fyaisa add-app <name> [--template vegatube|snake|doom|fileexplorer]"
+  [[ $# -ge 1 ]] || die "$usage"
+  local name="" template="vegatube"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --template)
+        [[ $# -ge 2 ]] || die "$usage"
+        template="$2"; shift 2
+        ;;
+      --template=*)
+        template="${1#*=}"; shift
+        ;;
+      -*)
+        die "Unknown option for add-app: $1"
+        ;;
+      *)
+        [[ -z "$name" ]] || die "Unexpected argument for add-app: $1"
+        name="$1"; shift
+        ;;
+    esac
+  done
+  [[ -n "$name" ]] || die "$usage"
+  case "$name" in
+    *'"'*|*$'\n'*|*$'\r'*) die "App name must not contain quotes or newlines" ;;
+  esac
+
+  case "$template" in
+    vegatube|snake|doom|fileexplorer) ;;
+    *) die "Unknown template: $template (use: vegatube, snake, doom, fileexplorer)" ;;
+  esac
+
   local slug; slug="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
   [[ -n "$slug" ]] || die "Invalid app name: $name"
 
-  local dir="apps/$slug"
-  if [[ -d "$dir" ]]; then
-    die "App directory already exists: $dir"
+  local src="$SCRIPT_DIR/apps/$template"
+  local dir="$SCRIPT_DIR/apps/$slug"
+  [[ -f "$SCRIPT_DIR/catalog.json" ]] || die "catalog.json not found in $SCRIPT_DIR"
+  [[ -f "$src/manifest.toml" && -f "$src/app.json" && -f "$src/package.json" ]] ||
+    die "Template '$template' is incomplete at $src"
+  [[ ! -e "$dir" ]] || die "App directory already exists: $dir"
+
+  local app_id="app.$slug.main"
+  if ! python3 - "$SCRIPT_DIR/catalog.json" "$app_id" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as fh:
+    catalog = json.load(fh)
+if any(a.get('id') == sys.argv[2] for a in catalog.get('apps', [])):
+    raise SystemExit(1)
+PY
+  then
+    die "Catalog already has an app with id $app_id"
   fi
 
   info "Creating new app: $name ($dir)"
 
-  # Copy template
-  case "$template" in
-    vegatube) cp -r "$SCRIPT_DIR/apps/vegatube" "$dir" ;;
-    snake) cp -r "$SCRIPT_DIR/apps/snake" "$dir" ;;
-    doom) cp -r "$SCRIPT_DIR/apps/doom" "$dir" ;;
-    fileexplorer) cp -r "$SCRIPT_DIR/apps/fileexplorer" "$dir" ;;
-    *) die "Unknown template: $template (use: vegatube, snake, doom, fileexplorer)" ;;
-  esac
+  cp -r "$src" "$dir" || die "Could not copy template $template to $dir"
+  rm -rf "$dir/node_modules" "$dir/build" "$dir/buildinfo.json" "$dir/dist"
 
-  # Remove build artifacts
-  rm -rf "$dir/node_modules" "$dir/build" "$dir/buildinfo.json"
+  # Targeted manifest rewrite: only [package]'s title/version/id/icon and the
+  # first [[components.interactive]] id change. Need/module ids stay untouched.
+  local tmp; tmp="$(mktemp)"
+  MANIFEST_TITLE="$name" MANIFEST_PKG="app.$slug" MANIFEST_COMP="$app_id" MANIFEST_ICON="@image/$slug.png" \
+  awk '
+    BEGIN {
+      title = ENVIRON["MANIFEST_TITLE"]; pkg = ENVIRON["MANIFEST_PKG"];
+      comp = ENVIRON["MANIFEST_COMP"]; icon = ENVIRON["MANIFEST_ICON"]
+    }
+    /^\[/ { section = $0; in_component = ($0 == "[[components.interactive]]") }
+    {
+      if (section == "[package]") {
+        if ($0 ~ /^title[[:space:]]*=/) { print "title = \"" title "\""; next }
+        if ($0 ~ /^version[[:space:]]*=/) { print "version = \"1.0.0\""; next }
+        if ($0 ~ /^id[[:space:]]*=/) { print "id = \"" pkg "\""; next }
+        if ($0 ~ /^icon[[:space:]]*=/) { print "icon = \"" icon "\""; next }
+      }
+      if (in_component && $0 ~ /^id[[:space:]]*=/) { print "id = \"" comp "\""; next }
+      print
+    }
+  ' "$dir/manifest.toml" > "$tmp" || { rm -f "$tmp"; die "Could not rewrite $dir/manifest.toml"; }
+  mv "$tmp" "$dir/manifest.toml" || die "Could not install rewritten manifest"
 
-  # Update manifest
-  sed -i "s/title = \".*\"/title = \"$name\"/" "$dir/manifest.toml"
-  sed -i "s/id = \".*\"/id = \"app.$slug\"/" "$dir/manifest.toml"
+  python3 - "$dir/app.json" "$app_id" "$name" <<'PY' || die "Could not update $dir/app.json"
+import json, sys
+path, app_id, display = sys.argv[1:4]
+with open(path, encoding='utf-8') as fh:
+    data = json.load(fh)
+data['name'] = app_id
+data['displayName'] = display
+with open(path, 'w', encoding='utf-8') as fh:
+    json.dump(data, fh, indent=2)
+    fh.write('\n')
+PY
 
-  # Update package.json
-  sed -i "s/\"name\": \".*\"/\"name\": \"@fyaisa\/$slug\"/" "$dir/package.json"
-  sed -i "s/\"version\": \".*\"/\"version\": \"1.0.0\"/" "$dir/package.json"
+  python3 - "$dir/package.json" "$slug" <<'PY' || die "Could not update $dir/package.json"
+import json, sys
+path, slug = sys.argv[1:3]
+with open(path, encoding='utf-8') as fh:
+    data = json.load(fh)
+data['name'] = '@fyaisa/' + slug
+data['version'] = '1.0.0'
+if isinstance(data.get('kepler'), dict):
+    data['kepler']['appName'] = slug
+with open(path, 'w', encoding='utf-8') as fh:
+    json.dump(data, fh, indent=2)
+    fh.write('\n')
+PY
 
-  # Update app.json
-  cat > "$dir/app.json" <<EOF
-{
-  "//": "The declared app name must follow this pattern to be KRL-compatible",
-  "name": "app.$slug.main",
-  "displayName": "$name"
-}
-EOF
-
-  # Add to catalog.json
-  python3 -c "
-import json
-with open('$SCRIPT_DIR/catalog.json', 'r') as f:
-    cat = json.load(f)
+  python3 - "$SCRIPT_DIR/catalog.json" "$app_id" "$name" "$slug" "$(date +%F)" <<'PY' || die "Could not update catalog.json"
+import json, sys
+path, app_id, name, slug, updated = sys.argv[1:6]
+with open(path, encoding='utf-8') as fh:
+    catalog = json.load(fh)
 new_app = {
-    'id': 'app.$slug.main',
-    'name': '$name',
+    'id': app_id,
+    'name': name,
     'summary': 'TODO: Add a one-line summary.',
     'description': 'TODO: Add a full description.',
-    'path': 'apps/$slug',
+    'path': 'apps/' + slug,
     'license': 'GPL-3.0-only',
     'author': 'FYAISA contributors',
     'homepage': 'https://github.com/AaronYTDev/FYAISA',
@@ -700,22 +817,23 @@ new_app = {
     'drm': False,
     'status': 'beta',
     'version': '1.0.0',
-    'updated': '2026-10-10',
+    'updated': updated,
     'install': {
         'kind': 'vpkg-release',
         'release': 'https://api.github.com/repos/AaronYTDev/FYAISA/releases',
-        'note': 'Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/$slug with the Vega SDK.'
+        'note': 'No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install ' + app_id + ', or from apps/' + slug + ': npm install && npm run build:release && vega device install-app --dir . -b Release.'
     },
     'notes': [
         'TODO: Add notes about this app.',
         'Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore.'
     ]
 }
-cat['apps'].insert(0, new_app)
-with open('$SCRIPT_DIR/catalog.json', 'w') as f:
-    json.dump(cat, f, indent=2)
-    f.write('\n')
-"
+apps = catalog.setdefault('apps', [])
+apps.insert(0, new_app)
+with open(path, 'w', encoding='utf-8') as fh:
+    json.dump(catalog, fh, indent=2)
+    fh.write('\n')
+PY
 
   ok "App created at $dir"
   info "Next steps:"
@@ -723,7 +841,7 @@ with open('$SCRIPT_DIR/catalog.json', 'w') as f:
   info "  2. Edit $dir/src/App.tsx with your app logic"
   info "  3. Update the catalog entry in catalog.json"
   info "  4. Add an icon at $dir/assets/image/$slug.png"
-  info "  5. Build and test: fyaisa install app.$slug.main"
+  info "  5. Build and test: fyaisa install $app_id"
   info "  6. Push to GitHub and open a PR"
 }
 
