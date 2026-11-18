@@ -237,13 +237,36 @@ const FALLBACK_CATALOG: Catalog = {
 // much already typed and you only punch in the last octets. It's ordinary text
 // once there — backspace clears it if your LAN lives somewhere else.
 const HOST_PREFIX = '192.168.';
-/** True once the box holds a full dotted address. */
-const hostFilled = (h: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h.trim());
+/**
+ * Normalise what the user typed into the one form the bridge URLs accept:
+ * a bare host with no scheme, path, port or trailing slash. People paste
+ * `http://192.168.1.5:47821/` as often as they type `192.168.1.5`.
+ */
+const normalizeHost = (raw: string): string =>
+  String(raw || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '')
+    .trim();
 
-// D-pad-friendly keypad for typing a dotted IPv4 address.
+/** True once the box holds something we can actually connect to. */
+const hostFilled = (h: string) => {
+  const host = normalizeHost(h);
+  if (host === 'localhost') return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return host.split('.').every(part => parseInt(part, 10) <= 255);
+  }
+  // Hostnames like `my-pc` or `my-pc.local` work too, as long as DNS/mDNS
+  // resolves them on the TV's network.
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host);
+};
+
+// D-pad-friendly keypad for typing an address. 'C' clears the prefill so a
+// network on 10.x or 172.x isn't a backspace marathon.
 const HOST_KEYS = [
   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
-  '.', '⌫',
+  '.', '⌫', 'C',
 ];
 
 // The search keyboard: letters, digits and the two punctuation marks worth
@@ -885,7 +908,8 @@ const Hub = () => {
    * on the PC. Shared by the manual address box and the Discover button.
    */
   const pairWithHost = useCallback(
-    async (host: string) => {
+    async (rawHost: string) => {
+      const host = normalizeHost(rawHost);
       if (!hostFilled(host)) {
         setPair(p => ({...p, status: 'error', message: 'Enter your computer’s address first'}));
         return;
@@ -957,23 +981,40 @@ const Hub = () => {
    * to type on the D-pad.
    */
   const discoverBridge = useCallback(async () => {
-    const host = '127.0.0.1';
+    setPair(p => ({...p, status: 'requesting', message: 'Looking for ElevSH…'}));
+
+    // 127.0.0.1 is the reverse tunnel opened by `fyaisa connect --lan`.
+    // A remembered LAN address is the fallback when no device is linked to
+    // the Vega CLI, so no tunnel exists but the bridge is still listening.
+    const candidates = ['127.0.0.1'];
     try {
-      setPair(p => ({...p, status: 'requesting', message: 'Looking for ElevSH…'}));
-      const res = await fetch(`http://${host}:${BRIDGE_PORT}/ping`);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
+      const saved = await loadPair();
+      const remembered = normalizeHost(saved?.host || '');
+      if (remembered && remembered !== candidates[0]) candidates.push(remembered);
     } catch {
-      setPair(p => ({
-        ...p,
-        status: 'error',
-        message: 'No ElevSH found on this PC — make sure `fyaisa connect --lan` is running, or type the address below.',
-      }));
+      // No saved pairing — loopback is still worth trying.
+    }
+
+    for (const host of candidates) {
+      // Race-based deadline: AbortController is not in this SDK's TS libs.
+      const ok = await Promise.race([
+        fetch(`http://${host}:${BRIDGE_PORT}/ping`)
+          .then(r => r.ok)
+          .catch(() => false),
+        new Promise<boolean>(resolve => setTimeout(() => resolve(false), 2500)),
+      ]);
+      if (!ok) continue;
+      console.info(`[FYAISA] discovered ElevSH on ${host}`);
+      await pairWithHost(host);
       return;
     }
-    console.info('[FYAISA] discovered ElevSH on 127.0.0.1');
-    await pairWithHost(host);
+
+    setPair(p => ({
+      ...p,
+      status: 'error',
+      message:
+        'No ElevSH found. On the PC run `fyaisa connect --lan`; if the TV is not linked to the Vega CLI, type the "reachable http://..." address it prints below.',
+    }));
   }, [pairWithHost]);
 
   /**
@@ -1720,7 +1761,7 @@ const Hub = () => {
             </Text>
             <Text style={styles.code}>
               {hostFilled(pair.host || '')
-                ? `http://${pair.host}:${BRIDGE_PORT}`
+                ? `http://${normalizeHost(pair.host || '')}:${BRIDGE_PORT}`
                 : pair.host || 'not set'}
             </Text>
 
@@ -1730,7 +1771,9 @@ const Hub = () => {
                   key={i}
                   style={({focused}) => [styles.key, focused && styles.keyFocused, focused && styles.focused]}
                   onPress={() => {
-                    if (k === '⌫') {
+                    if (k === 'C') {
+                      setPair(p => ({...p, host: ''}));
+                    } else if (k === '⌫') {
                       setPair(p => ({...p, host: (p.host || '').slice(0, -1)}));
                     } else {
                       setPair(p => ({...p, host: (p.host || '') + k}));

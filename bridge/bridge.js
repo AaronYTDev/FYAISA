@@ -587,6 +587,11 @@ function json(res, code, body) {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(payload),
     'Cache-Control': 'no-store',
+    // The hub runs in a WebView; permissive CORS keeps tokenless /ping and
+    // the pairing endpoints reachable from any origin the shell uses.
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-FYAISA-Token, X-FYAISA-App',
   });
   res.end(payload);
 }
@@ -675,6 +680,9 @@ function appGate(req, res) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const path_ = url.pathname;
+
+  // CORS preflight from a WebView-based client. Never carries a token.
+  if (req.method === 'OPTIONS') return json(res, 200, {});
 
   // liveness (unauthenticated, no secrets)
   if (path_ === '/ping') return json(res, 200, { ok: true, service: 'fyaisa-bridge' });

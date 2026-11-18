@@ -71,7 +71,8 @@ need_vega() {
 }
 setup_env() {
   [[ -d "$NODE_BIN" ]] && export PATH="$NODE_BIN:$PATH"
-  need_vega
+  # vega is checked per-command: `list`, `connect` and `approve` work fine
+  # without the SDK installed or sourced in this shell.
   need curl "Install curl."
   need python3 "Install python3 (used to read catalog.json)."
 }
@@ -229,6 +230,7 @@ device_targets() {
 }
 
 require_device() {
+  need_vega
   local addrs; addrs="$(device_targets)"
   [[ -n "$addrs" ]] || die "No Vega device found. Enable Developer Mode and set Connection mode to TCP/IP, then run: fyaisa devices"
   ok "Device: $(printf '%s' "$addrs" | tr '\n' ' ')"
@@ -427,6 +429,23 @@ stop_reverse_forward() {
   vega device stop-port-forwarding --port "$port" --forward false >/dev/null 2>&1 || true
 }
 
+# Manual pairing needs the host firewall to admit the Fire TV on this port.
+# Best effort: missing tools or no permission are not fatal — the bridge still
+# runs and the user can open the port by hand from the message we print.
+allow_lan_firewall() {
+  local port="$1" opened=0
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    ufw allow "$port"/tcp >/dev/null 2>&1 && opened=1
+  fi
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --add-port="$port"/tcp >/dev/null 2>&1 && opened=1
+  fi
+  if command -v netsh >/dev/null 2>&1; then
+    netsh advfirewall firewall add rule name="FYAISA ElevSH $port" dir=in action=allow protocol=TCP localport="$port" >/dev/null 2>&1 && opened=1
+  fi
+  return $((1 - opened))
+}
+
 # ---------------------------------------------------------------------------
 # connect — pair a Fire TV with this PC so the TV can queue installs
 # ---------------------------------------------------------------------------
@@ -443,7 +462,10 @@ cmd_connect() {
     esac
   done
 
-  need_vega
+  # The bridge itself only needs Node. Requiring the Vega CLI here used to kill
+  # `fyaisa connect --lan` outright when ~/vega/env had not been sourced — which
+  # left the TV with nothing to discover and nothing to connect to by address.
+  # Keep vega optional: installs need it, pairing does not.
   [[ -d "$NODE_BIN" ]] && export PATH="$NODE_BIN:$PATH"
   need node "Install Node.js 18+."
 
@@ -463,20 +485,35 @@ cmd_connect() {
 
   # Reverse-tunnel the port so the Fire TV can reach the bridge on its own
   # loopback, which is what makes FYAISA → ElevSH → Discover work with no
-  # address to type. Needs a Fire TV the Vega CLI can see; without one we only
-  # lose the shortcut, not the ability to pair.
+  # address to type. Needs the Vega CLI and a linked Fire TV; without either we
+  # only lose the shortcut — the bridge still serves manual pairing.
   if [[ $lan -eq 1 && $no_forward -eq 0 ]]; then
-    local addrs; addrs="$(device_targets)"
-    if [[ -z "$addrs" ]]; then
-      warn "No Fire TV visible to the Vega CLI — skipping the discovery tunnel."
-      warn "  Connect one first: vega exec vda connect <stick-ip>:5555"
-    elif start_reverse_forward "$port"; then
-      ok "Discovery tunnel ready — on the Fire TV: FYAISA → ElevSH → Discover."
+    if ! command -v vega >/dev/null 2>&1; then
+      warn "Vega CLI not in PATH — no discovery tunnel. The bridge still runs."
+      warn "  Enable it later: source ~/vega/env, then re-run with --lan."
+      warn "  Meanwhile pair by typing the 'reachable http://...' address below."
     else
-      warn "Could not open the discovery tunnel — enter this PC's address in FYAISA → ElevSH instead."
+      local addrs; addrs="$(device_targets)"
+      if [[ -z "$addrs" ]]; then
+        warn "No Fire TV visible to the Vega CLI — skipping the discovery tunnel."
+        warn "  Link one first: vega exec vda connect <stick-ip>:5555"
+        warn "  Or pair by typing the 'reachable http://...' address below."
+      elif start_reverse_forward "$port"; then
+        ok "Discovery tunnel ready — on the Fire TV: FYAISA → ElevSH → Discover."
+      else
+        warn "Could not open the discovery tunnel — type the 'reachable http://...' address below."
+      fi
     fi
   fi
 
+  # A firewall on the PC silently drops the TV's connection even when the
+  # bridge is listening on 0.0.0.0. Open the port where we can; say so when we
+  # do. Never fail the bridge if the firewall tool is missing or locked down.
+  if [[ $lan -eq 1 ]] && allow_lan_firewall "$port"; then
+    ok "Firewall: opened TCP $port for LAN pairing."
+  fi
+
+  ok "Bridge starting — on the Fire TV use FYAISA → ElevSH → pair."
   exec node "${args[@]}"
 }
 
@@ -587,6 +624,7 @@ cmd_approve() {
 }
 
 cmd_devices() {
+  need_vega
   info "Fire TVs visible to the Vega CLI"
   vega device list
   local addrs; addrs="$(device_targets)"
