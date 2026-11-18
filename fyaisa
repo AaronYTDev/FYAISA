@@ -565,6 +565,15 @@ cmd_connect() {
     ok "Firewall: opened TCP $port for LAN pairing."
   fi
 
+  # A second `connect` used to exec node into EADDRINUSE and dump a stack
+  # trace. Treat a bridge that already answers /ping as the requested state:
+  # the tunnel/firewall work above has still run, and the caller can pair with
+  # the running bridge immediately.
+  if curl -fsS --max-time 2 "http://127.0.0.1:$port/ping" >/dev/null 2>&1; then
+    ok "ElevSH bridge already running on port $port — pair from FYAISA → ElevSH."
+    return 0
+  fi
+
   ok "Bridge starting — on the Fire TV use FYAISA → ElevSH → pair."
   exec node "${args[@]}"
 }

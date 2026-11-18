@@ -1312,6 +1312,17 @@ const server = http.createServer((req, res) => {
 server.requestTimeout = BODY_TIMEOUT_MS + 5_000;
 server.headersTimeout = 10_000;
 
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(`\n  ElevSH bridge is already listening on ${BIND}:${PORT}.`);
+    console.error(`  Stop it with: fyaisa disconnect --port ${PORT}`);
+    console.error('  Or pair with the running bridge; no second bridge is needed.\n');
+    process.exit(1);
+  }
+  console.error(`\n  ElevSH bridge could not listen on ${BIND}:${PORT}: ${err && err.message ? err.message : err}\n`);
+  process.exit(1);
+});
+
 server.listen(PORT, BIND, () => {
   const addrs = [];
   if (BIND === '0.0.0.0') {
