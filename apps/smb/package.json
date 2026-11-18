@@ -1,6 +1,6 @@
 {
   "name": "@fyaisa/smb",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Super Mario Bros NES emulator for Vega OS Fire TV Sticks (FYAISA hub app).",
   "author": "FYAISA contributors",

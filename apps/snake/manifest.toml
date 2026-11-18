@@ -2,7 +2,7 @@ schema-version = 1
 
 [package]
 title = "Google Snake"
-version = "1.1.4"
+version = "1.1.5"
 id = "app.snake"
 icon = "@image/snake.png"
 
