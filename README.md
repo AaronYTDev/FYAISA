@@ -189,8 +189,8 @@ host command to use.
 | `fyaisa` CLI | list / search / info / install / update / uninstall / devices / connect / approve |
 | `fyaisa connect` bridge (ElevSH) | pairing (PC or FYAISA approval), token auth, per-app allow/deny, installs, `POST /vega`, `fyaisa disconnect` |
 | Catalog | `catalog.json` schema v1, served from this repo |
-| FYAISA app | works on a Fire TV Stick HD: live catalog with search, persistent pairing, Install via ElevSH, ElevSH allow/deny screen, and a Power tools panel (open hidden apps, running apps, command runner, reboot) |
-| Apps | the hub itself (`app.fyaisa.hub.main`), plus `app.vegatube.main` (VegaTube), `app.cinevega.main` (Cinevega), `app.fyaisa.files.main` (ElevSH Files, the file explorer), `app.snake.main` (Google Snake, streams from Google), `app.doom.main` (DOOM shareware, offline), `app.smb.main` (Super Mario Bros, NES emulator) and `app.tvtimer.main` (TV Timer) |
+| FYAISA app | works on a Fire TV Stick HD: first-run guidance, live catalog with search, persistent pairing, Install via ElevSH, ElevSH allow/deny screen, 13 themes, and a Power tools panel (open hidden apps, running apps, de-bloater, command runner, reboot) |
+| Apps | the hub itself (`app.fyaisa.hub.main`), plus `app.vegatube.main` (VegaTube), `app.cinevega.main` (Cinevega), `app.fyaisa.files.main` (ElevSH Files, the file explorer), `app.snake.main` (Google Snake, streams from Google), `app.doom.main` (DOOM shareware, offline), `app.smb.main` (Super Mario Bros, NES emulator), `app.tvtimer.main` (TV Timer), `app.fyaisa.scoreboard.main` (Couch Scoreboard, offline) and `app.fyaisa.g2048.main` (2048, offline) |
 
 ## Not affiliated with Amazon or Google
 

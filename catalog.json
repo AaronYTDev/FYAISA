@@ -49,7 +49,7 @@
         "Power Tools gains a de-bloater: tick preinstalled apps you never use \u2014 a preset covers the usual suspects \u2014 and remove them over ElevSH.",
         "App details gain Open on Fire TV and Uninstall buttons: launch a homebrew app, or remove it with a two-tap confirm \u2014 no terminal needed.",
         "The address box still opens pre-filled with 192.168. as a manual fallback; pasted addresses and hostnames are normalised.",
-        "2.0.0: 13 themes including Cyberpunk, Matrix and High Contrast; animated backgrounds, focus pulse and press feedback; screenshot previews when entries publish them; in-hub hub update notices.",
+        "2.0.0: first-run guidance and plain-language ElevSH help; 13 themes including Cyberpunk, Matrix and High Contrast; static focus, press and disabled states; screenshot previews when entries publish them; in-hub hub update notices.",
         "2.0.0: `fyaisa connect --lan` no longer needs the Vega CLI in PATH, opens the firewall port, and prints the exact address to pair from.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
