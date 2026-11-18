@@ -163,7 +163,7 @@
       "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "updated": "2026-11-18",
       "install": {
         "kind": "vpkg-release",
@@ -176,6 +176,7 @@
         "Fixed: VidSrc mirror fallbacks (vidsrc.to, .cc, .xyz, .pro, .net) — if one domain dies, the app tries the next.",
         "1.0.2: mirror failover hardened and lockfile aligned.",
         "1.0.3: D-pad cursor in the player, OK clicks the page instead of exiting, chrome auto-hides on playback, ElevSH host prefilled with 192.168.",
+        "1.0.4: cursor is now a visible native overlay (on by default) driven by the D-pad; OK clicks exactly where the pointer is.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },
@@ -210,7 +211,7 @@
       "requiresNetwork": true,
       "drm": true,
       "status": "stable",
-      "version": "1.3.1",
+      "version": "1.3.2",
       "updated": "2026-11-18",
       "install": {
         "kind": "vpkg-release",
@@ -221,6 +222,7 @@
         "Contains a vendored copy of the TizenTube userscript (GPL-3.0); upstream credits live in the repos.",
         "Updates install on the TV via `fyaisa update app.vegatube.main` (no in-app pairing); the ElevSH client lives in ElevSH Files.",
         "1.3.1: invalid manifest services removed and install script aligned with the Vega SDK.",
+        "1.3.2: native Menu control strip (play/pause, ±10s, speed, next, settings) that works without TizenTube's transport patch; injection retries dropped chunks; hidden preview videos paused and OS media control disabled to cut stutter; invalid Vega 1.2 module dependency removed.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },
