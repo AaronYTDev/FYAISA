@@ -15,7 +15,7 @@
  *   - Home: exit
  */
 
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {
   BackHandler,
   StyleSheet,
@@ -43,15 +43,14 @@ export const App = () => {
   const hideSplashScreenCallback = useHideSplashScreenCallback();
 
   const [mode, setMode] = useState<Mode>('stopwatch');
-  // Elapsed hundredths for the stopwatch, and remaining hundredths for the
-  // countdown. A single shared counter keeps the display code in one place.
+  // Elapsed tenths for the stopwatch, remaining tenths for the countdown. A
+  // single shared counter keeps the display code in one place.
   const [tenths, setTenths] = useState(0);
-  // Countdown starting value in hundredths, so "reset" restores it.
+  // Countdown starting value in tenths, so "reset" restores it.
   const [countdownTotal, setCountdownTotal] = useState(0);
   const [running, setRunning] = useState(false);
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  /** Format hundredths of a second as H:MM:SS (stopwatch) or M:SS (countdown). */
+  /** Format tenths of a second as H:MM:SS (stopwatch) or M:SS (countdown). */
   const format = useCallback(
     (t: number): string => {
       const totalSecs = Math.floor(t / 10);
@@ -67,56 +66,56 @@ export const App = () => {
     [],
   );
 
-  /** Start or resume the tick loop. */
+  /** Start or resume the tick loop. The effect below owns the interval. */
   const start = useCallback(() => {
     if (running) return;
-    if (tenths === 0 && mode === 'countdown' && countdownTotal === 0) {
+    if (mode === 'countdown' && tenths <= 0) {
       return; // nothing to count down
     }
     setRunning(true);
-    tickRef.current = setInterval(() => {
-      setTenths(t => {
-        const next = t - 1;
-        if (next <= 0 && mode === 'countdown') {
-          setRunning(false);
-          tickRef.current && clearInterval(tickRef.current);
-          tickRef.current = null;
-          return 0;
-        }
-        return next;
-      });
-    }, TICK_MS);
-  }, [running, tenths, mode, countdownTotal]);
+  }, [running, mode, tenths]);
 
   /** Stop the tick loop without resetting. */
   const stop = useCallback(() => {
-    if (!running) return;
     setRunning(false);
-    if (tickRef.current) {
-      clearInterval(tickRef.current);
-      tickRef.current = null;
+  }, []);
+
+  // One owner for the interval. It depends only on running/mode, so a render
+  // caused by a tick cannot tear down and silently lose the loop.
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => {
+      setTenths(t => (mode === 'countdown' ? Math.max(0, t - 1) : t + 1));
+    }, TICK_MS);
+    return () => clearInterval(id);
+  }, [running, mode]);
+
+  // Countdown ends at zero instead of wrapping or ticking into negatives.
+  useEffect(() => {
+    if (running && mode === 'countdown' && tenths <= 0) {
+      setRunning(false);
     }
-  }, [running]);
+  }, [running, mode, tenths]);
 
   /** Reset the active timer to its starting value. */
   const reset = useCallback(() => {
-    stop();
+    setRunning(false);
     setTenths(mode === 'countdown' ? countdownTotal : 0);
-  }, [mode, countdownTotal, stop]);
+  }, [mode, countdownTotal]);
 
   /** Switch to the other mode, carrying nothing over. */
   const toggleMode = useCallback(() => {
-    stop();
+    setRunning(false);
     setMode(m => (m === 'stopwatch' ? 'countdown' : 'stopwatch'));
     setTenths(0);
-  }, [stop]);
+  }, []);
 
   /** Bump the countdown up or down by a minute (remote up/down). */
   const adjustCountdown = useCallback(
     (dir: 1 | -1) => {
       if (mode !== 'countdown') return;
       if (running) return;
-      const step = 600; // one minute in hundredths
+      const step = 600; // one minute in tenths
       const next = Math.max(0, countdownTotal + dir * step);
       setCountdownTotal(next);
       setTenths(next);
@@ -144,22 +143,10 @@ export const App = () => {
     }, [mode, running, toggleMode, adjustCountdown, start, stop, reset]),
   );
 
-  // Start ticking whenever running (re-mounts the interval after a render).
+  // Back falls through to the system and leaves the app. Returning true here
+  // swallows the press and strands the operator in the timer.
   useEffect(() => {
-    if (running && !tickRef.current) {
-      start();
-    }
-    return () => {
-      if (tickRef.current) {
-        clearInterval(tickRef.current);
-        tickRef.current = null;
-      }
-    };
-  }, [running, start]);
-
-  // Back falls through to the system and leaves the app; Home exits.
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => false);
     return () => sub.remove();
   }, []);
 
@@ -169,9 +156,10 @@ export const App = () => {
 
   const isCountdown = mode === 'countdown';
   const label = isCountdown ? 'Countdown' : 'Stopwatch';
+  const actionHint = running ? 'OK stop' : 'OK start';
   const hint = isCountdown
-    ? '▲▼ minutes   ◀▶ mode   OK start   Menu reset'
-    : '◀▶ mode   OK start   Menu reset';
+    ? `▲▼ minutes   ◀▶ mode   ${actionHint}   Menu reset`
+    : `◀▶ mode   ${actionHint}   Menu reset`;
 
   return (
     <View style={styles.container}>

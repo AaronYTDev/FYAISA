@@ -68,10 +68,3 @@ id = "com.amazon.audio.control"
 
 [[wants.service]]
 id = "com.amazon.kepler.ucc.publisher"
-
-[[wants.service]]
-id = "com.amazon.gipc.uuid.*"
-
-[offers]
-[[offers.service]]
-id = "com.amazon.gipc.uuid.*"

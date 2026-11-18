@@ -12,13 +12,14 @@
  * Controls live in the shell's key shim; the remote's system buttons never
  * reach the WebView at all, so they are handled here instead: Back is the
  * Use key, Menu is Escape (the DOOM menu and backing out of submenus), both
- * injected into the page. Every raw TV event is logged so a button that is
+ * injected into the page. Unmapped TV events are logged so a button that is
  * not mapped yet still shows up in logcat. Home exits the app.
  */
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {BackHandler, StyleSheet, Text, View} from 'react-native';
 import {WebView} from '@amazon-devices/webview';
 import {
+  Pressable,
   useHideSplashScreenCallback,
   usePreventHideSplashScreen,
   useTVEventHandler,
@@ -142,6 +143,15 @@ export const App = () => {
     (webRef.current as any)?.reload();
   }, []);
 
+  useEffect(
+    () => () => {
+      if (retryTimerRef.current) {
+        clearTimeout(retryTimerRef.current);
+      }
+    },
+    [],
+  );
+
   const onMessage = useCallback((event: any) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
@@ -153,43 +163,42 @@ export const App = () => {
     }
   }, []);
 
-  // Menu and Play/Pause are system buttons: the WebView never sees them, but
-  // the UserInputManager does. Forward the two that matter into the page and
-  // log every other event, pressing on (action 0 or a single fire) only.
+  // Menu and Play/Pause are system buttons: with allowSystemKeyEvents off the
+  // WebView never sees them, but the TV hook does. Forward the two that matter
+  // into the page and log every unmapped button, on press (action 0) only.
   useTVEventHandler(
     useCallback(
       (event: HWEvent) => {
         const action = event.eventKeyAction;
-        if (!NAV_KEYS[event.eventType]) {
-          console.info(`[doom] tv ${event.eventType} a${action ?? '?'}`);
+        if (action !== 0) {
+          return; // 1 is release, 2 is repeat; the page dedups real presses
         }
-        if (action === 1 || loadError) {
-          return; // key release (handled on press) or no page to talk to
+        const type = event.eventType;
+        if (loadError || !sentRef.current) {
+          return; // no live game to drive
         }
         const web = webRef.current as any;
         if (!web?.injectJavaScript) {
           return;
         }
-        if (event.eventType === 'menu') {
+        if (type === 'menu') {
           web.injectJavaScript(ESCAPE_KEY_SCRIPT);
-        } else if (
-          event.eventType === 'playpause' ||
-          event.eventType === 'pause'
-        ) {
+        } else if (type === 'playpause' || type === 'pause') {
           web.injectJavaScript(USE_KEY_SCRIPT);
+        } else if (!NAV_KEYS[type]) {
+          console.info(`[doom] tv ${type} a${action}`);
         }
       },
       [loadError],
     ),
   );
 
-  // The WebView swallows Back, so the page never sees it: forward it as the
-  // Use key. Once the shell failed to load there is nothing to use, so Back
-  // falls through and exits the app.
+  // Back is consumed by the shell and never reaches the game: forward it as
+  // the Use key. With no live game to drive, fall through and let the OS exit.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       const web = webRef.current as any;
-      if (!loadError && web?.injectJavaScript) {
+      if (!loadError && sentRef.current && web?.injectJavaScript) {
         web.injectJavaScript(USE_KEY_SCRIPT);
         return true;
       }
@@ -208,6 +217,9 @@ export const App = () => {
         hasTVPreferredFocus
         javaScriptEnabled
         domStorageEnabled
+        // System keys go to KeplerScript, not the WebView. Without this the
+        // Back press never reaches the BackHandler below and simply vanishes.
+        allowSystemKeyEvents={false}
         // Let the Web Audio context (SDL_mixer's output) start without a
         // gesture; the remote's first press resumes it if the WebView still
         // holds it suspended.
@@ -217,7 +229,7 @@ export const App = () => {
         onMessage={onMessage}
       />
       {loadError ? (
-        <View style={styles.errorOverlay} pointerEvents="none">
+        <View style={styles.errorOverlay}>
           <Text style={styles.errorText}>Couldn&apos;t start DOOM</Text>
           <Text style={styles.errorDetail}>{loadError}</Text>
           <Pressable

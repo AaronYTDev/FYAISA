@@ -29,7 +29,7 @@
   "install": {
     "kind": "vpkg-release",
     "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-    "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/smb with the Vega SDK."
+    "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.smb.main, or from apps/smb: npm install && npm run build:release && vega device install-app --dir . -b Release."
   },
   "notes": [
     "Super Mario Bros NES emulator (jsnes). Downloads the ROM from an external host on first launch (no ROM bundled).",

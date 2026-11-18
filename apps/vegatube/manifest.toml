@@ -19,19 +19,11 @@ target = "1.2"
 [[needs.module]]
 id = "/com.amazon.vega.os@IVega_1_2"
 
-# DRM (Widevine) is required for YouTube playback of protected content.
-[[needs.privilege]]
-id = "com.amazon.privilege.security.file-sharing"
-
 [[needs.module]]
 id = "/com.amazon.kepler.keplerscript_4@IKeplerScript_0"
 
 [[needs.module]]
 id = "/com.amazon.kepler.webview_4@IWebview_4"
-
-# KeplerFileSystem — pairing persistence + settings for the FYAISA panel.
-[[needs.module]]
-id = "/com.amazon.kepler.kepler_file_system_0@IKeplerFileSystem_0"
 
 
 
@@ -82,10 +74,3 @@ id = "com.amazon.drm.crypto"
 # To enable accessibility support for your app, we recommend you add the UCC service with the Service Registrar
 [[wants.service]]
 id = "com.amazon.kepler.ucc.publisher"
-
-# Enable Group-IPC to access media services
-[[wants.service]]
-id = "com.amazon.gipc.uuid.*"
-[offers]
-[[offers.service]]
-id = "com.amazon.gipc.uuid.*"

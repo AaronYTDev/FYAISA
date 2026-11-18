@@ -21,7 +21,7 @@
     "build": "npm-run-all build:release",
     "install:device": "bash scripts/install-device.sh",
     "doctor": "vega project doctor",
-    "fyaisa:install": "bash ../../fyaisa install app.tizentube.vega"
+    "fyaisa:install": "bash ../../fyaisa install app.vegatube.main"
   },
   "dependencies": {
     "@amazon-devices/react-native-kepler": "^4.0.0",

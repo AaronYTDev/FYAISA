@@ -62,6 +62,11 @@ const YOUTUBE_TV_URL = 'https://www.youtube.com/tv';
 const MAX_AUTO_RETRIES = 4;
 const RETRY_BASE_DELAY_MS = 1500;
 
+// Two Back presses inside this window exit to the launcher. YouTube TV cannot
+// report "nothing left to close" to native code, so a long press sequence at
+// the root of the guide needs a native escape hatch.
+const BACK_EXIT_WINDOW_MS = 2200;
+
 /**
  * True if the failing URL is the top-level document rather than a subresource.
  *
@@ -212,12 +217,14 @@ const BACK_SCRIPT = `
   function escape() {
     try {
       for (var i = 0; i < 2; i++) {
-        var ev = new KeyboardEvent('keydown', {
-          key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
-          bubbles: true, cancelable: true
+        ['keydown', 'keyup'].forEach(function (type) {
+          var ev = new KeyboardEvent(type, {
+            key: 'Escape', code: 'Escape', keyCode: 27, which: 27,
+            bubbles: true, cancelable: true
+          });
+          document.dispatchEvent(ev);
+          sent++;
         });
-        document.dispatchEvent(ev);
-        sent++;
       }
       window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
         JSON.stringify({type: 'TT_LOG', message: '[diag] back via Escape (' + sent + ' events)'}));
@@ -227,7 +234,6 @@ const BACK_SCRIPT = `
     }
   }
   try {
-    var cmd = document.querySelector('ytm-') && window.ytPage && null;
     var executor = null;
     // YouTube TV exposes its command executor on the app element / polymer.
     var app = document.querySelector('ytm-app, #app, ytd-app, [id="app"]');
@@ -299,7 +305,7 @@ export const App = () => {
   // giving up and showing the error screen.
   const autoRetryRef = useRef(0);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const backDeliveredRef = useRef(true);
+  const lastBackRef = useRef(0);
 
   useEffect(() => {
     console.info(
@@ -325,9 +331,9 @@ export const App = () => {
    * So we run with allowSystemKeyEvents disabled (arrows/Enter still reach the
    * page normally), catch Back natively, and synthesize the key events YouTube
    * TV actually listens for: a 'POPUP_BACK' customAction via YouTube's own
-   * command executor, with a bubbling Escape keydown as the fallback.
-   *
-   * Returning false lets the system handle it, which exits to the launcher.
+   * command executor, with a bubbling Escape keydown as the fallback. One Back
+   * is consumed; a second inside BACK_EXIT_WINDOW_MS falls through and lets the
+   * OS close the app from the root of the guide.
    */
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -335,14 +341,14 @@ export const App = () => {
       if (!web?.injectJavaScript) {
         return false;
       }
-      if (!backDeliveredRef.current) {
-        // A page reload resets our knowledge of whether YouTube can still go back.
-        backDeliveredRef.current = true;
+      const now = Date.now();
+      if (now - lastBackRef.current < BACK_EXIT_WINDOW_MS) {
+        console.info('[VegaTube] second Back -> exit');
+        return false;
       }
+      lastBackRef.current = now;
       web.injectJavaScript(BACK_SCRIPT);
       console.info('[VegaTube] Back -> POPUP_BACK (+ Escape)');
-      // Always consume: at the root of the guide YouTube closes nothing, and
-      // letting it fall through would exit the app on every stray Back press.
       return true;
     });
     return () => sub.remove();
@@ -437,6 +443,7 @@ export const App = () => {
       setPageLoaded(true);
       // New page session: allow re-injection of TizenTube.
       injectedRef.current = false;
+      lastBackRef.current = 0;
       hideSplashScreenCallback();
       injectTizenTube();
     },
@@ -461,6 +468,7 @@ export const App = () => {
       hideSplashScreenCallback();
       // New page session on reload: allow re-injection.
       injectedRef.current = false;
+      lastBackRef.current = 0;
 
       if (autoRetryRef.current < MAX_AUTO_RETRIES) {
         const attempt = autoRetryRef.current + 1;
@@ -521,6 +529,7 @@ export const App = () => {
     setLoadError(null);
     setPageLoaded(false);
     injectedRef.current = false;
+    lastBackRef.current = 0;
     (webRef.current as any)?.reload();
   }, []);
 
@@ -557,16 +566,6 @@ export const App = () => {
         onError={onError}
         onHttpError={onHttpError}
         onMessage={onMessage}
-        // YouTube TV is a single-page app: in-app navigation does not fire
-        // onLoad, so re-arm injection whenever a navigation is committed. The
-        // prelude sentinel makes this a no-op when the page is unchanged.
-        {...({
-          onNavigationStateChange: (nav: any) => {
-            if (nav?.loading === false && nav?.url) {
-              injectTizenTube();
-            }
-          },
-        } as any)}
       />
 
       {loadError && (

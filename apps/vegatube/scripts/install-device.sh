@@ -1,36 +1,39 @@
 #!/usr/bin/env bash
-# Installs the built TizenTube vpkg on a connected Fire TV (Vega OS) device.
-#
-# Prereqs:
-#   - Developer Mode enabled on the Fire TV (see README)
-#   - `vega device list` shows your device
-#   - `npm run build:release` (or build:debug) has produced build/**/*.vpkg
-#
-# Usage:
-#   scripts/install-device.sh                # auto-pick the .vpkg, Release build
-#   scripts/install-device.sh <device-name>  # target a specific device
+# Build and install VegaTube on the connected Fire TV (Vega OS).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if [[ "${1:-}" == "-b" ]]; then
-  BUILD_TYPE="$2"; shift 2
-else
-  BUILD_TYPE="Release"
-fi
+BUILD_TYPE="Release"
+DEVICE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -b)
+      BUILD_TYPE="${2:-Release}"
+      shift 2
+      ;;
+    Release|Debug)
+      BUILD_TYPE="$1"
+      shift
+      ;;
+    *)
+      DEVICE="$1"
+      shift
+      ;;
+  esac
+done
 
-echo "==> Connected devices:"
-vega device list || true
+case "$BUILD_TYPE" in
+  Release|Debug) ;;
+  *) echo "usage: $0 [Release|Debug] [device-name]" >&2; exit 2 ;;
+esac
 
-echo "==> Building app (injection bundle + vpkg, ${BUILD_TYPE})..."
-npm run "build:$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')"
+rm -rf build buildinfo.json
+npm run "build:$(printf '%s' "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')"
 
-echo "==> Installing on device..."
-if [[ -n "${1:-}" ]]; then
-  vega device install-app --dir . -b "$BUILD_TYPE" --device "$1"
+if [[ -n "$DEVICE" ]]; then
+  vega device install-app --dir . -b "$BUILD_TYPE" --device "$DEVICE"
 else
   vega device install-app --dir . -b "$BUILD_TYPE"
 fi
-
-echo "==> Done. Launch 'TizenTube' from your Fire TV app list."

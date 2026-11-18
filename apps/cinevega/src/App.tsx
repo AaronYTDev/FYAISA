@@ -44,7 +44,7 @@ const CINEVEGA_APP_ID = 'app.cinevega.main';
 const HUB_CATALOG_URL =
   'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json';
 const STORE_PATH = '/data/bridge.json';
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 
 // --- TMDB cache ---------------------------------------------------------------
 // TMDB responses are cached to this app's private /data so the home screen
@@ -300,17 +300,24 @@ const vidsrc = {
   },
 };
 
-/** Pick the first VidSrc base that hasn't been marked dead yet. */
-let vidsrcBaseIndex = 0;
-function currentVidsrcBase(): string {
-  return VIDSRC_BASES[vidsrcBaseIndex % VIDSRC_BASES.length];
-}
-function markVidsrcDead() {
-  vidsrcBaseIndex += 1;
-}
-function resetVidsrc() {
-  vidsrcBaseIndex = 0;
-}
+/**
+ * Build the embed URL for one mirror attempt. Attempts wrap at the list end so
+ * a manual retry after all mirrors failed starts over at the first one.
+ */
+const buildPlayerUrl = (
+  item: MediaItem,
+  episode: Episode | null,
+  attempt: number,
+): string => {
+  const base = VIDSRC_BASES[attempt % VIDSRC_BASES.length];
+  return episode
+    ? vidsrc.tvUrl(item.id, episode.season_number, episode.episode_number, base)
+    : vidsrc.movieUrl(item.id, base);
+};
+
+// Subresources on a dying mirror can fire several error events in one burst;
+// one failure per mirror per second is enough to walk the list.
+const PLAYER_FAILURE_COOLDOWN_MS = 1000;
 
 // --- ElevSH pairing persistence ----------------------------------------------
 type SavedPair = {host: string; token?: string};
@@ -383,6 +390,9 @@ export const App = () => {
   const [playerItem, setPlayerItem] = useState<MediaItem | null>(null);
   const [playerEpisode, setPlayerEpisode] = useState<Episode | null>(null);
   const [playerError, setPlayerError] = useState<string | null>(null);
+  const [playerNotice, setPlayerNotice] = useState<string | null>(null);
+  const playerAttemptRef = useRef(0);
+  const lastPlayerFailRef = useRef(0);
 
   // Load home data
   useEffect(() => {
@@ -653,23 +663,85 @@ export const App = () => {
     }
   }, []);
 
-  const playMovie = useCallback((item: MediaItem) => {
-    setPlayerTitle(item.title);
+  /** Load one mirror for the current title. Also backs the manual retry. */
+  const loadPlayerAttempt = useCallback(
+    (attempt: number) => {
+      if (!playerItem) return;
+      playerAttemptRef.current = attempt;
+      setPlayerError(null);
+      setPlayerNotice(
+        attempt > 0
+          ? `Mirror ${attempt + 1}/${VIDSRC_BASES.length}`
+          : null,
+      );
+      setPlayerUrl(buildPlayerUrl(playerItem, playerEpisode, attempt));
+    },
+    [playerItem, playerEpisode],
+  );
+
+  /**
+   * Mirror domains rot independently. Advance automatically on a main-frame
+   * failure and only surface the error once every mirror has been tried.
+   */
+  const handlePlayerFailure = useCallback(
+    (reason: string) => {
+      const now = Date.now();
+      if (now - lastPlayerFailRef.current < PLAYER_FAILURE_COOLDOWN_MS) return;
+      lastPlayerFailRef.current = now;
+      console.warn(`[cinevega] ${reason}`);
+      const next = playerAttemptRef.current + 1;
+      if (next < VIDSRC_BASES.length) {
+        loadPlayerAttempt(next);
+      } else {
+        setPlayerNotice(null);
+        setPlayerError(`${reason} — all ${VIDSRC_BASES.length} mirrors failed.`);
+      }
+    },
+    [loadPlayerAttempt],
+  );
+
+  // Vega's WebView fires onError/onHttpError for subresources too. A dead
+  // tracker must not burn through the mirror list.
+  const isMainFrameFailure = useCallback(
+    (event: any): boolean => {
+      const native = event?.nativeEvent || {};
+      if (native.isMainFrame === false) return false;
+      if (!native.url) return true;
+      try {
+        const current = new URL(playerUrl || VIDSRC_BASES[0]);
+        return new URL(native.url).hostname === current.hostname;
+      } catch {
+        return true;
+      }
+    },
+    [playerUrl],
+  );
+
+  const startPlayback = useCallback((item: MediaItem, episode: Episode | null) => {
+    setPlayerTitle(
+      episode
+        ? `${item.title} - S${episode.season_number} E${episode.episode_number}`
+        : item.title,
+    );
     setPlayerError(null);
+    setPlayerNotice(null);
     setPlayerItem(item);
-    setPlayerEpisode(null);
-    setPlayerUrl(vidsrc.movieUrl(item.id, currentVidsrcBase()));
+    setPlayerEpisode(episode);
+    playerAttemptRef.current = 0;
+    lastPlayerFailRef.current = 0;
+    setPlayerUrl(buildPlayerUrl(item, episode, 0));
     setScreen('player');
   }, []);
 
-  const playEpisode = useCallback((item: MediaItem, ep: Episode) => {
-    setPlayerTitle(`${item.title} - S${ep.season_number} E${ep.episode_number}`);
-    setPlayerError(null);
-    setPlayerItem(item);
-    setPlayerEpisode(ep);
-    setPlayerUrl(vidsrc.tvUrl(item.id, ep.season_number, ep.episode_number, currentVidsrcBase()));
-    setScreen('player');
-  }, []);
+  const playMovie = useCallback(
+    (item: MediaItem) => startPlayback(item, null),
+    [startPlayback],
+  );
+
+  const playEpisode = useCallback(
+    (item: MediaItem, ep: Episode) => startPlayback(item, ep),
+    [startPlayback],
+  );
 
   const doSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
@@ -918,25 +990,8 @@ export const App = () => {
             <Pressable
               hasTVPreferredFocus
               style={({focused}) => [styles.retryBtn, focused && styles.focusedRing]}
-              onPress={() => {
-                markVidsrcDead();
-                setPlayerError(null);
-                if (playerItem) {
-                  if (playerEpisode) {
-                    setPlayerUrl(
-                      vidsrc.tvUrl(
-                        playerItem.id,
-                        playerEpisode.season_number,
-                        playerEpisode.episode_number,
-                        currentVidsrcBase(),
-                      ),
-                    );
-                  } else {
-                    setPlayerUrl(vidsrc.movieUrl(playerItem.id, currentVidsrcBase()));
-                  }
-                }
-              }}>
-              <Text style={styles.retryBtnText}>Try next mirror</Text>
+              onPress={() => loadPlayerAttempt(0)}>
+              <Text style={styles.retryBtnText}>Try mirrors again</Text>
             </Pressable>
             <Pressable
               style={({focused}) => [styles.backBtn, focused && styles.focusedRing]}
@@ -958,18 +1013,23 @@ export const App = () => {
               // referer helps the player accept the request.
               originWhitelist={['*']}
               onHttpError={(event: any) => {
-                const code = event?.nativeEvent?.statusCode;
-                setPlayerError(
-                  `VidSrc mirror failed (HTTP ${code}). Trying the next mirror…`,
+                if (!isMainFrameFailure(event)) return;
+                handlePlayerFailure(
+                  `VidSrc HTTP ${event?.nativeEvent?.statusCode}`,
                 );
-                markVidsrcDead();
               }}
               onError={(event: any) => {
-                const desc = event?.nativeEvent?.description || 'unknown error';
-                setPlayerError(`VidSrc mirror failed: ${desc}. Trying the next mirror…`);
-                markVidsrcDead();
+                if (!isMainFrameFailure(event)) return;
+                handlePlayerFailure(
+                  `VidSrc load error: ${event?.nativeEvent?.description || 'unknown'}`,
+                );
               }}
             />
+            {playerNotice && !playerError ? (
+              <View style={styles.playerNotice} pointerEvents="none">
+                <Text style={styles.playerNoticeText}>{playerNotice}</Text>
+              </View>
+            ) : null}
             <Pressable
               hasTVPreferredFocus
               style={({focused}) => [styles.backBtn, focused && styles.focusedRing]}
@@ -1419,6 +1479,16 @@ const styles = StyleSheet.create({
   playerHeader: {paddingHorizontal: 40, paddingTop: 20, paddingBottom: 12},
   playerTitle: {color: '#fff', fontSize: 24, fontWeight: '700'},
   playerWebView: {flex: 1, backgroundColor: '#000'},
+  playerNotice: {
+    position: 'absolute',
+    top: 72,
+    left: 40,
+    backgroundColor: 'rgba(0,0,0,0.78)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  playerNoticeText: {color: '#ffb02e', fontSize: 14},
   playerErrorContainer: {
     flex: 1,
     alignItems: 'center',
