@@ -520,8 +520,7 @@ export const App = () => {
       try {
         // Inject EARLY_PROBE first: it sets up window.__snakeMode/Cursor and
         // registers a document-start key listener ahead of Google's handlers.
-        // injectedJavaScriptBeforeContentLoaded doesn't run on Vega OS 2.0,
-        // so we do it imperatively here like VegaTube does.
+        // Vega OS 2.0 only runs injected scripts through injectJavaScript.
         web.injectJavaScript(EARLY_PROBE);
         web.injectJavaScript(CONTROL_PROBE);
       } catch (err) {
@@ -562,7 +561,6 @@ export const App = () => {
         // Focus immediately so the remote drives the page.
         hasTVPreferredFocus
         userAgent={DESKTOP_UA}
-        injectedJavaScriptBeforeContentLoaded={EARLY_PROBE}
         javaScriptEnabled
         domStorageEnabled
         thirdPartyCookiesEnabled

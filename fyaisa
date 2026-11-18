@@ -770,6 +770,22 @@ PY
   cp -r "$src" "$dir" || die "Could not copy template $template to $dir"
   rm -rf "$dir/node_modules" "$dir/build" "$dir/buildinfo.json" "$dir/dist"
 
+  # The manifest rewrite below points at @image/<slug>.png. Copy the template
+  # art to that path too, so the scaffold always has a valid launcher icon.
+  local template_icon; template_icon="$(python3 - "$src/manifest.toml" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding='utf-8').read()
+m = re.search(r'^\s*icon\s*=\s*"@image/([^"]+)"', text, re.M)
+print(m.group(1) if m else '')
+PY
+)"
+  if [[ -n "$template_icon" && -f "$dir/assets/image/$template_icon" ]]; then
+    cp "$dir/assets/image/$template_icon" "$dir/assets/image/$slug.png" ||
+      die "Could not create launcher icon $dir/assets/image/$slug.png"
+  else
+    die "Template '$template' has no launcher icon to copy"
+  fi
+
   # Targeted manifest rewrite: only [package]'s title/version/id/icon and the
   # first [[components.interactive]] id change. Need/module ids stay untouched.
   local tmp; tmp="$(mktemp)"
@@ -819,16 +835,16 @@ with open(path, 'w', encoding='utf-8') as fh:
     fh.write('\n')
 PY
 
-  python3 - "$SCRIPT_DIR/catalog.json" "$app_id" "$name" "$slug" "$(date +%F)" <<'PY' || die "Could not update catalog.json"
+  python3 - "$SCRIPT_DIR/catalog.json" "$app_id" "$name" "$slug" "$template" "$(date +%F)" <<'PY' || die "Could not update catalog.json"
 import json, sys
-path, app_id, name, slug, updated = sys.argv[1:6]
+path, app_id, name, slug, template, updated = sys.argv[1:7]
 with open(path, encoding='utf-8') as fh:
     catalog = json.load(fh)
 new_app = {
     'id': app_id,
     'name': name,
-    'summary': 'TODO: Add a one-line summary.',
-    'description': 'TODO: Add a full description.',
+    'summary': 'New ' + name + ' app scaffolded from the ' + template + ' template.',
+    'description': 'New FYAISA homebrew app scaffolded from the ' + template + ' template. Update this description, the app source and the screenshot before publishing.',
     'path': 'apps/' + slug,
     'license': 'GPL-3.0-only',
     'author': 'FYAISA contributors',
@@ -849,7 +865,7 @@ new_app = {
         'note': 'No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install ' + app_id + ', or from apps/' + slug + ': npm install && npm run build:release && vega device install-app --dir . -b Release.'
     },
     'notes': [
-        'TODO: Add notes about this app.',
+        'Scaffolded from the ' + template + ' template; update the source, catalog text and launcher art before publishing.',
         'Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore.'
     ]
 }
@@ -865,9 +881,10 @@ PY
   info "  1. Edit $dir/manifest.toml with your app details"
   info "  2. Edit $dir/src/App.tsx with your app logic"
   info "  3. Update the catalog entry in catalog.json"
-  info "  4. Add an icon at $dir/assets/image/$slug.png"
-  info "  5. Build and test: fyaisa install $app_id"
-  info "  6. Push to GitHub and open a PR"
+  info "  4. Replace the placeholder icon at $dir/assets/image/$slug.png"
+  info "  5. Update $dir/README.md with controls and credits"
+  info "  6. Build and test: fyaisa install $app_id"
+  info "  7. Push to GitHub and open a PR"
 }
 
 main() {

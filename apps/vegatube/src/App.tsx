@@ -543,14 +543,10 @@ export const App = () => {
   /**
    * Inject the TizenTube prelude + userscript into the loaded page.
    *
-   * `injectedJavaScriptBeforeContentLoaded` is declared by the Vega WebView
-   * types but is not implemented natively on OS 2.0: the page loaded and
-   * played fine, yet nothing the script defined ever existed (no h5vcc
-   * bridge, no ad block, no settings category).
-   * The supported API is the imperative `injectJavaScript`, so we use that on
-   * every page load. The prelude sets a `window.__VEGATUBE__` sentinel,
-   * so re-running it (and the before-content-loaded prop, if a future OS
-   * implements it) can never double-install the patches.
+   * Vega OS 2.0 only runs injected scripts through `injectJavaScript`: the
+   * before-content-loaded prop never defined the TizenTube globals. Inject on
+   * every page load. The prelude sets a `window.__VEGATUBE__` sentinel, so
+   * re-running it can never double-install the patches.
    */
   const injectTizenTube = useCallback(() => {
     // Already confirmed ready for this page session — skip. The prelude sentinel
@@ -738,10 +734,6 @@ export const App = () => {
         source={{uri: YOUTUBE_TV_URL}}
         // Give the WebView focus immediately so the remote drives YouTube.
         hasTVPreferredFocus
-        // Inject the TizenTube shim + userscript before any page scripts run,
-        // equivalent to CDP's Page.addScriptToEvaluateOnNewDocument used by
-        // TizenTube Standalone on Tizen.
-        injectedJavaScriptBeforeContentLoaded={INJECTION_JS}
         userAgent={TV_USER_AGENT}
         javaScriptEnabled
         domStorageEnabled

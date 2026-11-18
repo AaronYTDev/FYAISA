@@ -381,7 +381,8 @@
         "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.snake.main, or from apps/snake: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
-        "No pairing needed \u2014 it never talks to your PC or the network.",
+        "No pairing needed \u2014 it never talks to your PC. The first launch needs internet to load Google's game; later launches use the WebView cache.",
+        "Menu toggles a D-pad cursor for clicking page buttons; D-pad steers the snake in game mode.",
         "1.1.5: lockfile aligned with the Vega SDK.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]

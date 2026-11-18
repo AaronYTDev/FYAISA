@@ -42,6 +42,7 @@ jobs:
           import os
           import re
           import sys
+          import tomllib
           from pathlib import Path
           from urllib.parse import urlparse
 
@@ -93,6 +94,8 @@ jobs:
                   value = app.get(key)
                   if not isinstance(value, str) or not value.strip():
                       errors.append(f'{label}: {key} must be a non-empty string')
+                  elif 'TODO' in value:
+                      errors.append(f'{label}: {key} still contains a TODO')
 
               app_id = app.get('id', '')
               if app_id and not app_id_re.match(app_id):
@@ -123,6 +126,18 @@ jobs:
                       errors.append(f'{label}: install.note must be a non-empty string')
                   elif re.search(r'(?<!no )prebuilt \.vpkg is published', note.lower()):
                       errors.append(f'{label}: install.note claims a prebuilt .vpkg is published')
+                  elif 'TODO' in note:
+                      errors.append(f'{label}: install.note still contains a TODO')
+
+              notes = app.get('notes', [])
+              if not isinstance(notes, list):
+                  errors.append(f'{label}: notes must be an array')
+              else:
+                  for note in notes:
+                      if not isinstance(note, str) or not note.strip():
+                          errors.append(f'{label}: note must be a non-empty string')
+                      elif 'TODO' in note:
+                          errors.append(f'{label}: note still contains a TODO')
 
               screenshots = app.get('screenshots', [])
               if screenshots is None:
@@ -171,6 +186,43 @@ jobs:
               scripts = pkg.get('scripts')
               if not isinstance(scripts, dict) or not scripts.get('build:release'):
                   errors.append(f'{label}: package.json has no build:release script')
+
+              try:
+                  app_json = json.loads((app_path / 'app.json').read_text(encoding='utf-8'))
+              except Exception as exc:
+                  app_json = {}
+                  errors.append(f'{label}: app.json is invalid: {exc}')
+              if app_json.get('name') != app_id:
+                  errors.append(f'{label}: app.json name {app_json.get("name")!r} != catalog id {app_id!r}')
+              if not isinstance(app_json.get('displayName'), str) or not app_json['displayName'].strip():
+                  errors.append(f'{label}: app.json displayName must be a non-empty string')
+
+              try:
+                  manifest = tomllib.loads((app_path / 'manifest.toml').read_text(encoding='utf-8'))
+              except Exception as exc:
+                  errors.append(f'{label}: manifest.toml is invalid: {exc}')
+              else:
+                  package = manifest.get('package') or {}
+                  if package.get('version') != version:
+                      errors.append(f'{label}: manifest version {package.get("version")!r} != catalog version {version!r}')
+                  components = manifest.get('components') or {}
+                  interactive = components.get('interactive') if isinstance(components, dict) else None
+                  component_id = interactive[0].get('id') if isinstance(interactive, list) and interactive else None
+                  if component_id != app_id:
+                      errors.append(f'{label}: manifest component id {component_id!r} != catalog id {app_id!r}')
+                  os_version = manifest.get('os') or {}
+                  os_version = os_version.get('version') if isinstance(os_version, dict) else None
+                  os_version = os_version or {}
+                  for key, catalog_key in (('min', 'minOsVersion'), ('target', 'targetOsVersion')):
+                      if os_version.get(key) != app.get(catalog_key):
+                          errors.append(f'{label}: manifest os.version.{key} {os_version.get(key)!r} != catalog {catalog_key} {app.get(catalog_key)!r}')
+                  icon = package.get('icon')
+                  if not isinstance(icon, str) or not icon.startswith('@image/') or '..' in icon:
+                      errors.append(f'{label}: manifest icon must be an @image/ path, got {icon!r}')
+                  else:
+                      icon_path = app_path / 'assets' / 'image' / icon[len('@image/'):]
+                      if not icon_path.is_file():
+                          errors.append(f'{label}: missing launcher icon {icon_path}')
 
           if errors:
               for error in errors:

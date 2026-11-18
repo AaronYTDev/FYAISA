@@ -35,8 +35,6 @@ import {Fyaisa, FyaisaError} from './fyaisaClient';
 
 // --- Config ------------------------------------------------------------------
 const TMDB_API_KEY = 'a7a6a0d8b0326f1e9f356cacd724b233';
-const TMDB_READ_TOKEN =
-  'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJhN2E2YTBkOGIwMzI2ZjFlOWYzNTZjYWNkNzI0YjIzMyIsIm5iZiI6MTc5MDg5ODA5OC42OTI5OTk4LCJzdWIiOiI2YWJlZWZiMjBhZDZlY2MwOGE4OWQxYjUiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.-2yJbHFpoGmO6JayHtIEghF0k5ft_0gIdctIUIjkt3Q';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
 
