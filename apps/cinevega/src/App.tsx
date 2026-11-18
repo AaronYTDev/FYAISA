@@ -20,6 +20,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import {Pressable} from '@amazon-devices/react-native-kepler';
@@ -44,7 +45,7 @@ const CINEVEGA_APP_ID = 'app.cinevega.main';
 const HUB_CATALOG_URL =
   'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json';
 const STORE_PATH = '/data/bridge.json';
-const APP_VERSION = '1.0.3';
+const APP_VERSION = '1.0.4';
 
 // --- TMDB cache ---------------------------------------------------------------
 // TMDB responses are cached to this app's private /data so the home screen
@@ -358,15 +359,16 @@ const hostFilled = (h: string): boolean => {
 };
 
 /**
- * Injected into the VidSrc WebView on every load. Menu flips between page
- * control and a drawn D-pad cursor; OK clicks the play control (or whatever is
- * under the pointer); arrow keys reveal the native chrome and, in cursor mode,
- * move the pointer before the page sees them. Clicks are single-flighted so the
- * page's keydown handler and the native remote hook cannot fire twice.
+ * Injected into the VidSrc WebView on every load. The native side owns the
+ * visible cursor: it moves a React Native overlay on D-pad presses and calls
+ * __cinevegaSetCursorRatio so this page clicks at the exact same spot. OK clicks
+ * the play control (or whatever is under the pointer); Menu toggles cursor mode.
+ * Clicks are single-flighted so the page's keydown handler and the native remote
+ * hook cannot fire twice. The DOM cursor here is only a fallback click anchor.
  */
 const PLAYER_CURSOR_SCRIPT = `
 (function () {
-  var mode = 'page';
+  var mode = 'cursor';
   var cur = {x: -1, y: -1};
   var cursorEl = null;
   var toastEl = null;
@@ -438,6 +440,15 @@ const PLAYER_CURSOR_SCRIPT = `
     drawCursor();
     activity();
   }
+
+  // Native overlay is the source of truth for position. It sends normalized
+  // coordinates so CSS px vs RN dp scaling cannot desync the click target.
+  window.__cinevegaSetCursorRatio = function (fx, fy) {
+    if (typeof fx !== 'number' || typeof fy !== 'number') return;
+    cur.x = Math.max(0, Math.min(window.innerWidth - 1, fx * window.innerWidth));
+    cur.y = Math.max(0, Math.min(window.innerHeight - 1, fy * window.innerHeight));
+    if (mode === 'cursor') drawCursor();
+  };
 
   window.__cinevegaToggleCursor = function () {
     mode = mode === 'cursor' ? 'page' : 'cursor';
@@ -582,7 +593,7 @@ const PLAYER_CURSOR_SCRIPT = `
     activity();
   }, true);
 
-  post({type: 'PLAYER_CURSOR_MODE', on: false});
+  post({type: 'PLAYER_CURSOR_MODE', on: true});
   log('player cursor script ready');
   true;
 })();
@@ -591,6 +602,22 @@ const PLAYER_CLICK_SCRIPT =
   'window.__cinevegaClick&&window.__cinevegaClick();true;';
 const PLAYER_CURSOR_TOGGLE_SCRIPT =
   'window.__cinevegaToggleCursor&&window.__cinevegaToggleCursor();true;';
+const buildCursorSetScript = (x: number, y: number) =>
+  `window.__cinevegaSetCursorRatio&&window.__cinevegaSetCursorRatio(${x.toFixed(4)},${y.toFixed(4)});true;`;
+/** One D-pad press moves the overlay ~6% of the viewport. */
+const CURSOR_STEP = 0.06;
+const moveCursorPos = (
+  pos: {x: number; y: number},
+  type: string | undefined,
+): {x: number; y: number} => {
+  let {x, y} = pos;
+  if (type === 'up' || type === 'ArrowUp') y -= CURSOR_STEP;
+  else if (type === 'down' || type === 'ArrowDown') y += CURSOR_STEP;
+  else if (type === 'left' || type === 'ArrowLeft') x -= CURSOR_STEP;
+  else if (type === 'right' || type === 'ArrowRight') x += CURSOR_STEP;
+  else return pos;
+  return {x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y))};
+};
 /** Native chrome hides this long after the last remote or cursor activity. */
 const PLAYER_CHROME_MS = 4000;
 
@@ -667,10 +694,13 @@ export const App = () => {
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [playerNotice, setPlayerNotice] = useState<string | null>(null);
   const [playerChromeVisible, setPlayerChromeVisible] = useState(true);
-  const [cursorMode, setCursorMode] = useState(false);
+  const [cursorMode, setCursorMode] = useState(true);
+  const [cursorPos, setCursorPos] = useState({x: 0.5, y: 0.5});
   const playerWebRef = useRef<any>(null);
   const playerChromeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cursorModeRef = useRef(false);
+  const cursorModeRef = useRef(true);
+  const cursorPosRef = useRef({x: 0.5, y: 0.5});
+  const {width: winWidth, height: winHeight} = useWindowDimensions();
   const playerAttemptRef = useRef(0);
   const lastPlayerFailRef = useRef(0);
 
@@ -790,10 +820,10 @@ export const App = () => {
     };
   }, [screen, playerError, playerNotice, revealPlayerChrome]);
 
-  // TV event handler for the player: Back exits, Menu switches the page between
-  // D-pad control and a drawn cursor, OK clicks. Everything else stays with the
-  // WebView and only wakes the chrome. The injected page script single-flights
-  // clicks, so its own Enter handler and this hook cannot double-fire.
+  // TV event handler for the player. The native overlay is the cursor: D-pad
+  // presses move it and mirror the position into the page so OK clicks at the
+  // same spot. Menu toggles cursor mode, OK clicks, Back exits. The injected
+  // page script single-flights clicks, so its Enter handler cannot double-fire.
   useTVEventHandler(
     useCallback((event: HWEvent) => {
       if (event.eventKeyAction !== 0) {
@@ -815,6 +845,13 @@ export const App = () => {
           web.injectJavaScript(PLAYER_CURSOR_TOGGLE_SCRIPT);
         } else if (type === 'select') {
           web.injectJavaScript(PLAYER_CLICK_SCRIPT);
+        } else if (cursorModeRef.current) {
+          const next = moveCursorPos(cursorPosRef.current, type);
+          if (next !== cursorPosRef.current) {
+            cursorPosRef.current = next;
+            setCursorPos(next);
+            web.injectJavaScript(buildCursorSetScript(next.x, next.y));
+          }
         }
       } catch (err) {
         console.warn('[cinevega] remote inject failed:', err);
@@ -1039,8 +1076,13 @@ export const App = () => {
       return;
     }
     try {
+      // The script now boots in cursor mode, so mirror the native position in
+      // and only toggle off if the user had switched back to D-pad control.
       web.injectJavaScript(PLAYER_CURSOR_SCRIPT);
-      if (cursorModeRef.current) {
+      web.injectJavaScript(
+        buildCursorSetScript(cursorPosRef.current.x, cursorPosRef.current.y),
+      );
+      if (!cursorModeRef.current) {
         web.injectJavaScript(PLAYER_CURSOR_TOGGLE_SCRIPT);
       }
     } catch (err) {
@@ -1071,8 +1113,10 @@ export const App = () => {
   );
 
   const startPlayback = useCallback((item: MediaItem, episode: Episode | null) => {
-    cursorModeRef.current = false;
-    setCursorMode(false);
+    cursorModeRef.current = true;
+    setCursorMode(true);
+    cursorPosRef.current = {x: 0.5, y: 0.5};
+    setCursorPos({x: 0.5, y: 0.5});
     setPlayerChromeVisible(true);
     setPlayerTitle(
       episode
@@ -1399,6 +1443,30 @@ export const App = () => {
         {playerNotice ? (
           <View style={styles.playerNotice} pointerEvents="none">
             <Text style={styles.playerNoticeText}>{playerNotice}</Text>
+          </View>
+        ) : null}
+        {/* Native cursor overlay. This is the visible pointer; the DOM cursor is
+            only a click anchor. pointerEvents=none keeps D-pad focus on the page. */}
+        {cursorMode ? (
+          <View style={StyleSheet.absoluteFill} pointerEvents="none">
+            <View
+              style={[
+                styles.cursorHalo,
+                {
+                  left: cursorPos.x * winWidth - 26,
+                  top: cursorPos.y * winHeight - 26,
+                },
+              ]}
+            />
+            <View
+              style={[
+                styles.cursorArrow,
+                {
+                  left: cursorPos.x * winWidth - 2,
+                  top: cursorPos.y * winHeight - 2,
+                },
+              ]}
+            />
           </View>
         ) : null}
       </View>
@@ -1865,6 +1933,34 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   playerNoticeText: {color: '#ffb02e', fontSize: 14},
+  cursorHalo: {
+    position: 'absolute',
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.92)',
+    backgroundColor: 'rgba(0,0,0,0.22)',
+    shadowColor: '#000',
+    shadowOpacity: 0.9,
+    shadowRadius: 6,
+    elevation: 8,
+  },
+  cursorArrow: {
+    position: 'absolute',
+    width: 0,
+    height: 0,
+    borderLeftWidth: 10,
+    borderRightWidth: 10,
+    borderBottomWidth: 20,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: '#fff',
+    transform: [{rotate: '35deg'}],
+    shadowColor: '#000',
+    shadowOpacity: 1,
+    shadowRadius: 3,
+  },
   playerErrorContainer: {
     flex: 1,
     alignItems: 'center',

@@ -45,6 +45,15 @@ Or from the repo root:
 ./fyaisa install app.cinevega.main
 ```
 
+## What was fixed (1.0.4)
+
+- **Visible cursor in the player** — the pointer is now a native React Native
+  overlay, on by default, so it renders above the video on Fire TV. The old
+  DOM-injected SVG cursor was hidden under the WebView chrome and unclickable.
+- **D-pad moves the native cursor** — each press shifts it ~6% of the screen and
+  mirrors the position into the page, so OK clicks exactly where the pointer is.
+- **Menu still toggles cursor mode** for direct D-pad player control; Back exits.
+
 ## What was fixed (1.0.3)
 
 - **Cursor mode in the player** — Menu toggles a drawn, D-pad-driven pointer.
