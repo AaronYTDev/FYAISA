@@ -45,9 +45,9 @@
       "notes": [
         "The FYAISA hub app itself. Update it from here.",
         "Opens with a short wordmark intro: the letters spread out and spell out what the acronym means. Any remote press skips it.",
-        "ElevSH gets a Discover button: with `fyaisa connect --lan` running, the hub finds your computer through a reverse tunnel — no IP to type on the D-pad.",
-        "Power Tools gains a de-bloater: tick preinstalled apps you never use — a preset covers the usual suspects — and remove them over ElevSH.",
-        "App details gain Open on Fire TV and Uninstall buttons: launch a homebrew app, or remove it with a two-tap confirm — no terminal needed.",
+        "ElevSH gets a Discover button: with `fyaisa connect --lan` running, the hub finds your computer through a reverse tunnel \u2014 no IP to type on the D-pad.",
+        "Power Tools gains a de-bloater: tick preinstalled apps you never use \u2014 a preset covers the usual suspects \u2014 and remove them over ElevSH.",
+        "App details gain Open on Fire TV and Uninstall buttons: launch a homebrew app, or remove it with a two-tap confirm \u2014 no terminal needed.",
         "The address box still opens pre-filled with 192.168. as a manual fallback; pasted addresses and hostnames are normalised.",
         "2.0.0: 13 themes including Cyberpunk, Matrix and High Contrast; animated backgrounds, focus pulse and press feedback; screenshot previews when entries publish them; in-hub hub update notices.",
         "2.0.0: `fyaisa connect --lan` no longer needs the Vega CLI in PATH, opens the firewall port, and prints the exact address to pair from.",
@@ -55,10 +55,93 @@
       ]
     },
     {
+      "id": "app.fyaisa.scoreboard.main",
+      "name": "Couch Scoreboard",
+      "summary": "Two-team scorekeeper for board games and couch tournaments. Fully offline.",
+      "description": "Couch Scoreboard is a pure React Native scorekeeper for Vega OS Fire TV devices. Pick a team with the D-pad, add or remove points with the remote, and set an optional winning target. No WebView, no network, no sign-in.",
+      "path": "apps/scoreboard",
+      "license": "GPL-3.0-only",
+      "author": "FYAISA contributors",
+      "homepage": "https://github.com/AaronYTDev/FYAISA",
+      "minOsVersion": "1.2",
+      "targetOsVersion": "1.2",
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "scoreboard",
+        "scores",
+        "game",
+        "utility",
+        "offline",
+        "native"
+      ],
+      "containsAds": false,
+      "requiresNetwork": false,
+      "drm": false,
+      "status": "stable",
+      "version": "1.0.0",
+      "updated": "2026-11-18",
+      "install": {
+        "kind": "vpkg-release",
+        "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.fyaisa.scoreboard.main, or from apps/scoreboard: npm install && npm run build:release && vega device install-app --dir . -b Release."
+      },
+      "notes": [
+        "Pure React Native \u2014 no WebView, no network, works fully offline.",
+        "D-pad up/down picks a team, left/right adjusts the score, OK adds a point, Menu resets, Play/Pause cycles the winning target.",
+        "Large score display designed for ten-foot viewing.",
+        "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ]
+    },
+    {
+      "id": "app.fyaisa.g2048.main",
+      "name": "2048",
+      "summary": "The sliding-tile puzzle, fully offline and driven by the D-pad.",
+      "description": "2048 is a fully offline sliding-tile puzzle for Vega OS Fire TV devices. D-pad slides tiles, OK starts a new game, Menu undoes the last move, and Back quits. All board rendering and tile art are local; nothing is downloaded after install.",
+      "path": "apps/g2048",
+      "license": "GPL-3.0-only",
+      "author": "FYAISA contributors",
+      "homepage": "https://github.com/AaronYTDev/FYAISA",
+      "minOsVersion": "1.2",
+      "targetOsVersion": "1.2",
+      "architectures": [
+        "armv7",
+        "aarch64",
+        "x86_64"
+      ],
+      "tags": [
+        "2048",
+        "puzzle",
+        "game",
+        "offline",
+        "native"
+      ],
+      "containsAds": false,
+      "requiresNetwork": false,
+      "drm": false,
+      "status": "stable",
+      "version": "1.0.0",
+      "updated": "2026-11-18",
+      "install": {
+        "kind": "vpkg-release",
+        "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.fyaisa.g2048.main, or from apps/g2048: npm install && npm run build:release && vega device install-app --dir . -b Release."
+      },
+      "notes": [
+        "Pure React Native \u2014 no WebView, no network, works fully offline.",
+        "D-pad slides, OK starts a new game, Menu undoes the last move (20-step history).",
+        "Local board and scoring; no account and no downloaded assets.",
+        "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ]
+    },
+    {
       "id": "app.tvtimer.main",
       "name": "TV Timer",
       "summary": "Stopwatch and countdown timer for your Fire TV. Works fully offline, driven by the remote.",
-      "description": "TV Timer is a stopwatch and a countdown timer in one app for Vega OS Fire TV Sticks. Pure React Native UI — no WebView, no network, nothing to sign in to. The remote drives it: D-pad switches mode and adjusts minutes, OK starts and stops, Menu resets, Back quits. Great for cooking timers, workout rests, or anything you want to time from the couch.",
+      "description": "TV Timer is a stopwatch and a countdown timer in one app for Vega OS Fire TV Sticks. Pure React Native UI \u2014 no WebView, no network, nothing to sign in to. The remote drives it: D-pad switches mode and adjusts minutes, OK starts and stops, Menu resets, Back quits. Great for cooking timers, workout rests, or anything you want to time from the couch.",
       "path": "apps/tvtimer",
       "license": "GPL-3.0-only",
       "author": "FYAISA contributors",
@@ -90,7 +173,7 @@
         "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.tvtimer.main, or from apps/tvtimer: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
-        "Pure React Native — no WebView, no network, works fully offline.",
+        "Pure React Native \u2014 no WebView, no network, works fully offline.",
         "D-pad switches mode and adjusts minutes, OK starts/stops, Menu resets, Back quits.",
         "1.0.1: timer state and remote input handling fixed.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
@@ -173,7 +256,7 @@
       "notes": [
         "Native React Native frontend with TMDB metadata and VidSrc playback.",
         "Fixed: declares com.amazon.network.service so TMDB and VidSrc can be reached.",
-        "Fixed: VidSrc mirror fallbacks (vidsrc.to, .cc, .xyz, .pro, .net) — if one domain dies, the app tries the next.",
+        "Fixed: VidSrc mirror fallbacks (vidsrc.to, .cc, .xyz, .pro, .net) \u2014 if one domain dies, the app tries the next.",
         "1.0.2: mirror failover hardened and lockfile aligned.",
         "1.0.3: D-pad cursor in the player, OK clicks the page instead of exiting, chrome auto-hides on playback, ElevSH host prefilled with 192.168.",
         "1.0.4: cursor is now a visible native overlay (on by default) driven by the D-pad; OK clicks exactly where the pointer is.",
@@ -184,7 +267,7 @@
       "id": "app.vegatube.main",
       "name": "VegaTube",
       "summary": "Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks.",
-      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega; VegaTube is the reference app for the hub's WebView injection technique (it ships without the ElevSH pairing client — ElevSH Files has that).",
+      "description": "Runs the official YouTube for TVs web app (youtube.com/tv) in a Vega WebView and injects the TizenTube userscript at document start, giving ad blocking, SponsorBlock, DeArrow, speed controls and themes on devices that cannot run the Android APK. Formerly TizenTube Vega; VegaTube is the reference app for the hub's WebView injection technique (it ships without the ElevSH pairing client \u2014 ElevSH Files has that).",
       "path": "apps/vegatube",
       "patch": {
         "for": "com.amazon.firetv.youtube.main",
@@ -222,7 +305,7 @@
         "Contains a vendored copy of the TizenTube userscript (GPL-3.0); upstream credits live in the repos.",
         "Updates install on the TV via `fyaisa update app.vegatube.main` (no in-app pairing); the ElevSH client lives in ElevSH Files.",
         "1.3.1: invalid manifest services removed and install script aligned with the Vega SDK.",
-        "1.3.2: native Menu control strip (play/pause, ±10s, speed, next, settings) that works without TizenTube's transport patch; injection retries dropped chunks; hidden preview videos paused and OS media control disabled to cut stutter; invalid Vega 1.2 module dependency removed.",
+        "1.3.2: native Menu control strip (play/pause, \u00b110s, speed, next, settings) that works without TizenTube's transport patch; injection retries dropped chunks; hidden preview videos paused and OS media control disabled to cut stutter; invalid Vega 1.2 module dependency removed.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },
@@ -262,7 +345,7 @@
       "notes": [
         "Pairs with ElevSH like every FYAISA app; approve it in FYAISA \u2192 ElevSH or with `fyaisa approve <code>`.",
         "Themed like the hub: 8 presets plus per-setting customisation (colours, button style, animated background), persisted on the TV.",
-        "The ElevSH address box opens pre-filled with 192.168. — just punch in the last octets of your computer's IP.",
+        "The ElevSH address box opens pre-filled with 192.168. \u2014 just punch in the last octets of your computer's IP.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },
