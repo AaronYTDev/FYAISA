@@ -40,7 +40,7 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from installer/ with the Vega SDK."
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: ./scripts/install-hub.sh, or from installer/: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
         "The FYAISA hub app itself. Update it from here.",
@@ -49,7 +49,7 @@
         "Power Tools gains a de-bloater: tick preinstalled apps you never use — a preset covers the usual suspects — and remove them over ElevSH.",
         "App details gain Open on Fire TV and Uninstall buttons: launch a homebrew app, or remove it with a two-tap confirm — no terminal needed.",
         "The address box still opens pre-filled with 192.168. as a manual fallback; pasted addresses and hostnames are normalised.",
-        "2.0.0: 13 themes including Cyberpunk, Matrix and High Contrast; animated backgrounds, focus pulse and press feedback; app screenshot galleries; in-hub hub update notices.",
+        "2.0.0: 13 themes including Cyberpunk, Matrix and High Contrast; animated backgrounds, focus pulse and press feedback; screenshot previews when entries publish them; in-hub hub update notices.",
         "2.0.0: `fyaisa connect --lan` no longer needs the Vega CLI in PATH, opens the firewall port, and prints the exact address to pair from.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
@@ -87,7 +87,7 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/tvtimer with the Vega SDK."
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.tvtimer.main, or from apps/tvtimer: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
         "Pure React Native — no WebView, no network, works fully offline.",
@@ -126,7 +126,7 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/smb with the Vega SDK."
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.smb.main, or from apps/smb: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
         "Super Mario Bros NES emulator (jsnes). Downloads the ROM from an external host on first launch (no ROM bundled).",
@@ -166,18 +166,13 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/cinevega with the Vega SDK."
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.cinevega.main, or from apps/cinevega: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
         "Native React Native frontend with TMDB metadata and VidSrc playback.",
         "Fixed: declares com.amazon.network.service so TMDB and VidSrc can be reached.",
         "Fixed: VidSrc mirror fallbacks (vidsrc.to, .cc, .xyz, .pro, .net) — if one domain dies, the app tries the next.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
-      ],
-      "screenshots": [
-        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/cinevega/assets/screenshot-home.png",
-        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/cinevega/assets/screenshot-detail.png",
-        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/cinevega/assets/screenshot-player.png"
       ]
     },
     {
@@ -216,16 +211,12 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/vegatube with the Vega SDK."
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.vegatube.main, or from apps/vegatube: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
         "Contains a vendored copy of the TizenTube userscript (GPL-3.0); upstream credits live in the repos.",
         "Updates install on the TV via `fyaisa update app.vegatube.main` (no in-app pairing); the ElevSH client lives in ElevSH Files.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
-      ],
-      "screenshots": [
-        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/vegatube/assets/screenshot-home.png",
-        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/vegatube/assets/screenshot-player.png"
       ]
     },
     {
@@ -259,7 +250,7 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/fileexplorer with the Vega SDK."
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.fyaisa.files.main, or from apps/fileexplorer: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
         "Pairs with ElevSH like every FYAISA app; approve it in FYAISA \u2192 ElevSH or with `fyaisa approve <code>`.",
@@ -297,7 +288,7 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/snake with the Vega SDK."
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.snake.main, or from apps/snake: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
         "No pairing needed \u2014 it never talks to your PC or the network.",
@@ -335,7 +326,7 @@
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
-        "note": "Prebuilt .vpkg is published on the FYAISA releases page. If no matching build exists, the host installer builds it from apps/doom with the Vega SDK."
+        "note": "No prebuilt .vpkg is published in v2.0.0. Build from source with the Vega SDK: fyaisa install app.doom.main, or from apps/doom: npm install && npm run build:release && vega device install-app --dir . -b Release."
       },
       "notes": [
         "Runs offline: the engine, the shareware episode data and the loader are inside the app.",

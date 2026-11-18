@@ -56,16 +56,18 @@ own `127.0.0.1:47821`. The hub's ElevSH screen then finds it with a single
 still there as a fallback.
 
 `fyaisa disconnect` removes the forward. Pass `--no-forward` to
-`fyaisa connect` to skip it entirely.
+`fyaisa connect` to skip it entirely; that flag belongs to the CLI, not the
+bridge process.
 
 Options:
 
-| Flag | Meaning |
-| --- | --- |
-| `--port N` | listen port (default `47821`) |
-| `--lan` | bind `0.0.0.0` so the Fire TV can reach it (default: localhost only) |
-| `--hub-dir` | FYAISA checkout to build apps from when it isn't behind the catalog |
-| `--tunnel` | print cloudflared/ngrok commands for internet access |
+| Flag | Where | Meaning |
+| --- | --- | --- |
+| `--port N` | CLI + bridge | listen port (default `47821`) |
+| `--lan` | CLI + bridge | bind `0.0.0.0` so the Fire TV can reach it (default: localhost only) |
+| `--hub <path>` / `--hub-dir <path>` | CLI / bridge | `fyaisa connect --hub` selects the checkout; it passes `--hub-dir` to `bridge.js` as the directory to build apps from when they aren't behind the catalog |
+| `--tunnel` | CLI + bridge | print cloudflared/ngrok commands for internet access |
+| `--no-forward` | CLI only | skip the reverse forward used by Discover |
 
 ## HTTP API
 
@@ -77,12 +79,12 @@ Options:
 | `POST` | `/pair/approve` | no | exchange code → token (also allows that app's ElevSH access) |
 | `GET` | `/access/status?appId=` | no | has this app been allowed/denied yet? |
 | `GET` | `/catalog` | token | current catalog |
-| `POST` | `/install` | token | `{appId}` → `{jobId}`, reconnects vda to the requesting TV, then builds + installs. Add `patch: true` for a patch install: the app is rebuilt under its catalog `patch.for` identity (original's app id + display name, version forced to `99.99.99`), the original app is uninstalled first; see "Patch installs" in [`docs/HOMEBREW.md`](../docs/HOMEBREW.md) |
+| `POST` | `/install` | token | `{appId}` → `{jobId}`, reconnects vda to the requesting TV, then builds + installs. Add `patch: true` for a patch install: the app is rebuilt under its catalog `patch.for` identity (original's app id + display name, version forced to `99.99.99`), the original is uninstalled after the build succeeds and before the patch is installed; see "Patch installs" in [`docs/HOMEBREW.md`](../docs/HOMEBREW.md) |
 | `GET` | `/job?id=` | token | job status + build log |
 | `GET` | `/jobs` | token | all jobs |
 | `POST` | `/uninstall` | token (hub/host tools) | `{appId}` → remove the app from the device (`vega device uninstall-app`), `{ok, exitCode, log}` |
 | `GET` | `/pair/pending` | token (FYAISA) | app pairing requests waiting for a decision |
-| `GET` | `/access` | token (FYAISA) | the allow/deny list: `[{appId, status}]` |
+| `GET` | `/access` | token (FYAISA) | the allow/deny list: `{apps: [{appId, status}]}` |
 | `POST` | `/access` | token (FYAISA) | `{appId, decision: allow \| deny \| revoke}` |
 | `POST` | `/launch` | token | `{appId}` launch an app on the device |
 | `POST` | `/vega` | token | run an allowlisted `vega` CLI command on the PC |
@@ -117,7 +119,7 @@ pairing it already has:
 ```bash
 curl -X POST http://<pc>:47821/vega -H "X-FYAISA-Token: $TOKEN" \
      -d '{"args":["device","list"]}'
-# -> {"ok":true,"exitCode":0,"stdout":"Found the following device: …","stderr":"","durationMs":1440}
+# -> {"ok":true,"exitCode":0,"stdout":"Found the following device: …","stderr":"","truncated":false,"durationMs":1440}
 ```
 
 Body: `{args: string[], timeoutMs?: number}` (default 30 s, max 120 s).
@@ -148,5 +150,6 @@ The easiest way to use it is the vendored client; see
 
 ## Requirements
 
-Node 18+, the Vega CLI on `PATH`, and a FYAISA checkout containing
-`catalog.json` and `apps/`.
+Node 20+. The Vega CLI on `PATH` is required for build/install jobs; pairing,
+catalog browsing, and the allow/deny API work without it. A FYAISA checkout
+containing `catalog.json` and `apps/` is needed for local builds.

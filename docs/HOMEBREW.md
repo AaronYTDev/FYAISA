@@ -31,7 +31,7 @@ fyaisa connect    ◀──HTTP 47821────────  FYAISA app (pairi
 
 ```bash
 source ~/vega/env          # adds ~/vega/bin to PATH for this shell
-vega --version             # e.g. Vega CLI Version: 1.4.4
+vega --version             # e.g. Vega CLI Version: 1.4.9
 ```
 
 `~/vega/env` is a plain sh snippet; add `source ~/vega/env` to `~/.bashrc` to
@@ -77,8 +77,15 @@ vega device install-app --dir . -b Release
 ```
 
 The hub app itself builds the same way; `./scripts/install-hub.sh` does the
-clean build and the install in one step (pass `aarch64` as the first
-argument for other sticks).
+clean build and the install in one step. It takes an optional architecture
+(`armv7` by default, or `aarch64` / `x86_64`) and an optional
+`--device <ip:port>`:
+
+```bash
+./scripts/install-hub.sh
+./scripts/install-hub.sh aarch64
+./scripts/install-hub.sh x86_64 --device 192.168.12.197:5555
+```
 
 Managing what's on the device:
 
@@ -166,10 +173,11 @@ Full walkthrough:
    reinstalls of the app (it lives in the app's private `/data`), so you only
    do this once per PC.
 
-Useful flags: `--port N` (change 47821), `--no-forward` (skip the discovery
-tunnel and enter the PC's address by hand instead), `--tunnel` (prints
-cloudflared/ngrok commands for internet access, though LAN is the intended
-mode), `--hub-dir <path>`.
+Useful `fyaisa connect` flags: `--port N` (change 47821), `--no-forward` (skip
+the discovery tunnel and enter the PC's address by hand instead), `--tunnel`
+(prints cloudflared/ngrok commands for internet access, though LAN is the
+intended mode), `--hub <path>` (point the CLI at a local checkout). The bridge
+itself takes `--hub-dir <path>`, which is what `fyaisa connect` passes through.
 If the token ever goes stale (e.g. you deleted `~/.fyaisa/bridge.json`), the
 app detects the 401 on its next launch and asks you to re-pair; the **Forget
 ElevSH pairing** button clears it manually.
@@ -262,7 +270,7 @@ import {Fyaisa} from './fyaisaClient'; // vendored copy, see below
 
 const fy = Fyaisa.from({host: '192.168.12.102', token, appId: 'app.fyaisa.files.main'});
 
-const cli  = await fy.vega(['--version']);              // "Vega CLI Version: 1.4.4"
+const cli  = await fy.vega(['--version']);              // "Vega CLI Version: 1.4.9"
 const devs = await fy.vega(['device', 'list']);         // connected Fire TVs
 await fy.vega(['device', 'launch-app',  '--appName', 'app.fyaisa.files.main']);
 await fy.vega(['device', 'terminate-app', '--appName', 'app.fyaisa.files.main']);
@@ -301,8 +309,10 @@ slow commands are killed at the timeout. Anything else is a `403`; see
    and `src/App.tsx`.
 3. Register it in `catalog.json` if the scaffolder didn't (one entry per
    app; see the schema fields on the existing entry).
-4. Open a PR. GitHub Actions validates the catalog and builds changed
-   apps. After it merges, `fyaisa list` and the TV app show it.
+4. Open a PR. GitHub Actions validates the catalog and builds every catalog app
+   for `armv7`, `aarch64` and `x86_64`, uploading each `.vpkg` as a per-app,
+   per-architecture artifact. After it merges, `fyaisa list` and the TV app
+   show it.
 
 The full contract (naming, licensing, catalog fields) is in
 [`apps/README.md`](../apps/README.md).

@@ -19,10 +19,12 @@ FYAISA/
 ├── fyaisa                    # host CLI: list / search / build / install / connect / approve
 ├── apps/
 │   ├── README.md             # the app format (contract for contributors)
+│   ├── cinevega/             # Cinevega, TMDB + VidSrc streaming app
 │   ├── doom/                 # DOOM shareware, compiled to WebAssembly
 │   ├── fileexplorer/         # ElevSH Files, a D-pad file browser over ElevSH
 │   ├── smb/                  # Super Mario Bros: NES emulator (jsnes) in a WebView
 │   ├── snake/                # Google Snake, Google's snake arcade game in a WebView
+│   ├── tvtimer/              # TV Timer, offline stopwatch + countdown
 │   └── vegatube/             # reference app: VegaTube (ad-free YouTube)
 ├── bridge/
 │   ├── bridge.js             # ElevSH bridge: pairing + installs + access gate
@@ -175,10 +177,10 @@ log-stream quirks), see [`docs/HOMEBREW.md`](docs/HOMEBREW.md).
 
 ## Why builds happen on your machine
 
-`.vpkg` binaries are not hosted for most apps. `fyaisa install` clones and
-builds the source with the Vega SDK, so you run code you could have
-compiled yourself. Prebuilt packages can still be published on the repo's
-Releases page; the catalog's `install` block describes how to get one.
+v2.0.0 publishes no prebuilt `.vpkg` assets. `fyaisa install` clones and
+builds the source with the Vega SDK, so you run code you could have compiled
+yourself. The catalog's `install` block records the source-build path and the
+host command to use.
 
 ## Status
 
@@ -188,7 +190,7 @@ Releases page; the catalog's `install` block describes how to get one.
 | `fyaisa connect` bridge (ElevSH) | pairing (PC or FYAISA approval), token auth, per-app allow/deny, installs, `POST /vega`, `fyaisa disconnect` |
 | Catalog | `catalog.json` schema v1, served from this repo |
 | FYAISA app | works on a Fire TV Stick HD: live catalog with search, persistent pairing, Install via ElevSH, ElevSH allow/deny screen, and a Power tools panel (open hidden apps, running apps, command runner, reboot) |
-| Apps | the hub itself (`app.fyaisa.hub.main`), plus `app.vegatube.main` (VegaTube), `app.fyaisa.files.main` (ElevSH Files, the file explorer), `app.snake.main` (Google Snake, streams from Google), `app.doom.main` (DOOM shareware, offline) and `app.smb.main` (Super Mario Bros, NES emulator) |
+| Apps | the hub itself (`app.fyaisa.hub.main`), plus `app.vegatube.main` (VegaTube), `app.cinevega.main` (Cinevega), `app.fyaisa.files.main` (ElevSH Files, the file explorer), `app.snake.main` (Google Snake, streams from Google), `app.doom.main` (DOOM shareware, offline), `app.smb.main` (Super Mario Bros, NES emulator) and `app.tvtimer.main` (TV Timer) |
 
 ## Not affiliated with Amazon or Google
 
