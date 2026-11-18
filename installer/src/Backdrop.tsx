@@ -12,7 +12,7 @@
  */
 import * as React from 'react';
 import {useEffect, useMemo, useRef} from 'react';
-import {Animated, Easing, StyleSheet, Text, View} from 'react-native';
+import {Animated, Easing, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import {useAppTheme} from './theme';
 
 /** Multiplier on the base duration: bigger = slower. */
@@ -234,11 +234,14 @@ const Sweep = ({driver, accent}: {driver: Animated.Value; accent: string}) => (
 );
 
 const Grid = ({driver, accent}: {driver: Animated.Value; accent: string}) => {
+  const {width, height} = useWindowDimensions();
+  const cellW = Math.max(120, width / 7);
+  const cellH = Math.max(110, height / 5);
+  const cols = Math.max(5, Math.ceil(width / cellW));
+  const rows = Math.max(4, Math.ceil(height / cellH));
   const cells: React.ReactElement[] = [];
-  const cellW = 180;
-  const cellH = 150;
-  for (let r = 0; r < 4; r++) {
-    for (let c = 0; c < 7; c++) {
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
       cells.push(
         <View
           key={`grid-${r}-${c}`}
@@ -265,7 +268,7 @@ const Grid = ({driver, accent}: {driver: Animated.Value; accent: string}) => {
             position: 'absolute',
             left: 0,
             top: 0,
-            width: 200,
+            width: cellW * 1.2,
             height: '100%',
             backgroundColor: accent,
             opacity: driver.interpolate({inputRange: [0, 1], outputRange: [0.015, 0.09]}),
@@ -273,7 +276,7 @@ const Grid = ({driver, accent}: {driver: Animated.Value; accent: string}) => {
               {
                 translateX: driver.interpolate({
                   inputRange: [0, 1],
-                  outputRange: [-220, 2100],
+                  outputRange: [-cellW * 1.3, width + cellW],
                 }),
               },
             ],
@@ -285,22 +288,52 @@ const Grid = ({driver, accent}: {driver: Animated.Value; accent: string}) => {
 };
 
 /**
- * Plain Text columns under one opacity-fading layer. The old version ran ten
- * looping native animations over sixty Animated.Text nodes, which was far too
- * much for the Stick's UI thread during application mount.
+ * Full-screen, continuously falling glyph columns. Two identical stacked copies
+ * per column scroll by one copy-height on a linear native loop, so the sawtooth
+ * reset is invisible. Only transform/opacity are native-animated; no layout,
+ * no color interpolation, one loop for the whole effect.
  */
-const MatrixRain = ({driver, accent}: {driver: Animated.Value; accent: string}) => {
-  const columns = useMemo(
-    () =>
-      Array.from({length: 7}, (_, c) => ({
-        left: c * 48,
-        chars: Array.from(
-          {length: 7},
-          (_, r) => GRID_CHARS[(c * 11 + r * 7 + r * c) % GRID_CHARS.length],
-        ),
-      })),
-    [],
-  );
+const MatrixRain = ({
+  driver,
+  accent,
+  speed,
+}: {
+  driver: Animated.Value;
+  accent: string;
+  speed: number;
+}) => {
+  const {width, height} = useWindowDimensions();
+  const fall = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(fall, {
+        toValue: 1,
+        duration: 2600 * speed,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [fall, speed]);
+
+  const glyphH = 28;
+  const rows = Math.max(6, Math.ceil(height / glyphH) + 1);
+  const copyH = rows * glyphH;
+  const columns = useMemo(() => {
+    const count = Math.max(8, Math.ceil(width / 64));
+    return Array.from({length: count}, (_, c) => ({
+      left: Math.round((c * width) / count),
+      chars: Array.from(
+        {length: rows},
+        (_, r) => GRID_CHARS[(c * 11 + r * 7 + r * c) % GRID_CHARS.length],
+      ).join('\n'),
+    }));
+  }, [width, rows]);
+
+  const translateY = fall.interpolate({inputRange: [0, 1], outputRange: [-copyH, 0]});
+
   return (
     <Animated.View
       pointerEvents="none"
@@ -309,20 +342,29 @@ const MatrixRain = ({driver, accent}: {driver: Animated.Value; accent: string}) 
         {opacity: driver.interpolate({inputRange: [0, 1], outputRange: [0.55, 0.95]})},
       ]}>
       {columns.map(col => (
-        <View key={col.left} style={{position: 'absolute', left: col.left, top: 0}}>
-          {col.chars.map((ch, r) => (
+        <Animated.View
+          key={col.left}
+          style={{
+            position: 'absolute',
+            left: col.left,
+            top: 0,
+            transform: [{translateY}],
+          }}>
+          {[0, 1].map(copy => (
             <Text
-              key={r}
+              key={copy}
               style={{
                 color: accent,
                 fontSize: 18,
-                opacity: 0.24 + (r % 3) * 0.18,
-                marginTop: 22,
+                lineHeight: glyphH,
+                width: 26,
+                textAlign: 'center',
+                opacity: copy === 0 ? 0.58 : 0.42,
               }}>
-              {ch}
+              {col.chars}
             </Text>
           ))}
-        </View>
+        </Animated.View>
       ))}
     </Animated.View>
   );
@@ -351,7 +393,7 @@ export const Backdrop = () => {
       {resolved.background === 'sweep' ? <Sweep driver={driver} accent={resolved.accent} /> : null}
       {resolved.background === 'grid' ? <Grid driver={driver} accent={resolved.accent} /> : null}
       {resolved.background === 'matrix-rain' ? (
-        <MatrixRain driver={driver} accent={resolved.accent} />
+        <MatrixRain driver={driver} accent={resolved.accent} speed={speed} />
       ) : null}
     </View>
   );
