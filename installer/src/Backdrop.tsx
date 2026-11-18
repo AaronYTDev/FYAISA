@@ -1,22 +1,18 @@
 /**
  * Ambient background for the hub.
  *
- * Six effects, all built from plain animated Views (transforms + opacity, so
- * they run on the native driver and cost almost nothing on a Fire TV Stick):
+ * Fire TV Safe Build:
+ * - one native loop for the whole backdrop, never one per effect
+ * - only transform and opacity are animated
+ * - no Animated.Text, no color/shadow interpolation, no layout animation
+ * - starts only after the intro has released its own native nodes
  *
- *   aurora — three big soft blobs drifting and breathing
- *   waves  — wide translucent ribbons sweeping side to side (PS4-store-ish)
- *   sweep  — a single light bar trailing diagonally across the screen
- *   grid   — a subtle glowing grid that breathes with the theme accent
- *   matrix-rain — falling green characters on dark (Matrix preset)
- *
- * It sits behind everything and never takes input. The animation speed is set
- * by the theme's "energy" (calm / normal / party). When the theme's background
- * is "off" nothing renders at all.
+ * The static layers still read as a deep, glowing gradient, so the screen gets
+ * motion without turning launches into a memory pressure event.
  */
 import * as React from 'react';
-import { useEffect, useMemo, useRef } from 'react';
-import { Easing, StyleSheet, Animated, View } from 'react-native';
+import {useEffect, useMemo, useRef} from 'react';
+import {Animated, Easing, StyleSheet, Text, View} from 'react-native';
 import {useAppTheme} from './theme';
 
 /** Multiplier on the base duration: bigger = slower. */
@@ -26,304 +22,208 @@ const ENERGY_SPEED: Record<'calm' | 'normal' | 'party', number> = {
   party: 0.55,
 };
 
-/**
- * One shared set of loop drivers. They always run while any effect is active;
- * the individual renderers read from them, so switching effects doesn't change
- * the number of hooks between renders.
- */
-const useDrivers = (active: boolean, baseMs: number, speed: number) => {
-  const drivers = useRef([0, 1, 2, 3].map(() => new Animated.Value(0))).current;
+const GRID_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*';
+
+/** One shared loop. Every effect below reads from this value. */
+const useDriver = (active: boolean, baseMs: number, speed: number) => {
+  const value = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    if (!active) {
-      return;
-    }
-    const loops = drivers.map((value, i) =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(value, {
-            toValue: 1,
-            duration: baseMs * speed * (1 + i * 0.35),
-            easing: Easing.inOut(Easing.quad),
-            useNativeDriver: true,
-          }),
-          Animated.timing(value, {
-            toValue: 0,
-            duration: baseMs * speed * (1 + i * 0.35),
-            easing: Easing.inOut(Easing.quad),
-            useNativeDriver: true,
-          }),
-        ]),
-      ),
+    if (!active) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(value, {
+          toValue: 1,
+          duration: baseMs * speed,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(value, {
+          toValue: 0,
+          duration: baseMs * speed,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
     );
-    loops.forEach(loop => loop.start());
-    return () => loops.forEach(loop => loop.stop());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, baseMs, speed]);
+    loop.start();
+    return () => loop.stop();
+  }, [active, baseMs, speed, value]);
 
-  return drivers;
+  return value;
 };
 
-const Waves = ({
-  drivers,
-  accent,
-  focus,
-  link,
-}: {
-  drivers: Animated.Value[];
-  accent: string;
-  focus: string;
-  link: string;
-}) => {
-  const bands = [
-    {top: '-22%', height: 460, color: accent, opacity: 0.16, dx: 240, dy: 70},
-    {top: '2%', height: 560, color: focus, opacity: 0.1, dx: -280, dy: -50},
-    {top: '40%', height: 500, color: link, opacity: 0.12, dx: 320, dy: 80},
-    {top: '70%', height: 460, color: focus, opacity: 0.08, dx: -220, dy: -60},
-  ];
-  return (
-    <>
-      {bands.map((band, i) => {
-        const value = drivers[i % drivers.length];
-        return (
-          <Animated.View
-            key={i}
-            style={
-              {
-                position: 'absolute',
-                left: '-30%',
-                width: '160%',
-                top: band.top,
-                height: band.height,
-                borderRadius: band.height / 2,
-                backgroundColor: band.color,
-                opacity: band.opacity,
-                transform: [
-                  {
-                    translateX: value.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-band.dx, band.dx],
-                    }),
-                  },
-                  {
-                    translateY: value.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-band.dy, band.dy],
-                    }),
-                  },
-                ],
-              } as any
-            }
-          />
-        );
-      })}
-    </>
-  );
-};
+/** Static depth stack. Large translucent ellipses fake a soft gradient. */
+const Depth = ({accent, focus, link}: {accent: string; focus: string; link: string}) => (
+  <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+    <View
+      style={{
+        position: 'absolute',
+        left: '-18%',
+        top: '-16%',
+        width: 760,
+        height: 760,
+        borderRadius: 380,
+        backgroundColor: accent,
+        opacity: 0.055,
+      }}
+    />
+    <View
+      style={{
+        position: 'absolute',
+        right: '-14%',
+        top: '18%',
+        width: 660,
+        height: 660,
+        borderRadius: 330,
+        backgroundColor: focus,
+        opacity: 0.045,
+      }}
+    />
+    <View
+      style={{
+        position: 'absolute',
+        left: '22%',
+        bottom: '-30%',
+        width: 720,
+        height: 720,
+        borderRadius: 360,
+        backgroundColor: link,
+        opacity: 0.05,
+      }}
+    />
+  </View>
+);
 
 const Aurora = ({
-  drivers,
+  driver,
   accent,
   focus,
   link,
 }: {
-  drivers: Animated.Value[];
+  driver: Animated.Value;
   accent: string;
   focus: string;
   link: string;
 }) => {
   const blobs = [
-    {left: '-15%', top: '-12%', size: 640, color: accent, opacity: 0.18, dx: 150, dy: 110},
-    {left: '42%', top: '-20%', size: 740, color: focus, opacity: 0.12, dx: -170, dy: 130},
-    {left: '18%', top: '42%', size: 580, color: link, opacity: 0.14, dx: 190, dy: -120},
+    {left: '-12%', top: '-10%', size: 640, color: accent, dx: 140, dy: 100, scale: 1.14},
+    {left: '44%', top: '-18%', size: 700, color: focus, dx: -160, dy: 120, scale: 1.1},
+    {left: '16%', top: '44%', size: 580, color: link, dx: 170, dy: -110, scale: 1.16},
   ];
   return (
-    <>
-      {blobs.map((blob, i) => {
-        const value = drivers[i % drivers.length];
-        return (
-          <Animated.View
-            key={i}
-            style={
-              {
-                position: 'absolute',
-                left: blob.left,
-                top: blob.top,
-                width: blob.size,
-                height: blob.size,
-                borderRadius: blob.size / 2,
-                backgroundColor: blob.color,
-                opacity: blob.opacity,
-                transform: [
-                  {
-                    translateX: value.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-blob.dx, blob.dx],
-                    }),
-                  },
-                  {
-                    translateY: value.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [-blob.dy, blob.dy],
-                    }),
-                  },
-                  {
-                    scale: value.interpolate({inputRange: [0, 1], outputRange: [1, 1.18]}),
-                  },
-                ],
-              } as any
-            }
-          />
-        );
-      })}
-    </>
-  );
-};
-
-const GRID_COLUMNS = 6;
-const GRID_ROWS = 5;
-const GRID_CHARS =
-  'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*';
-
-const Grid = ({
-  driver,
-  accent,
-}: {
-  driver: Animated.Value;
-  accent: string;
-}) => {
-  // A grid of cells whose border color pulses between the surface and accent.
-  const cells: React.ReactElement[] = [];
-  const cellW = 160;
-  const cellH = 140;
-  for (let r = 0; r < GRID_ROWS; r++) {
-    for (let c = 0; c < GRID_COLUMNS; c++) {
-      const pulse = driver.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [0, 1, 0],
-      });
-      cells.push(
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {blobs.map((blob, i) => (
         <Animated.View
-          key={`grid-${r}-${c}`}
+          key={i}
           style={
             {
               position: 'absolute',
-              left: c * cellW,
-              top: r * cellH,
-              width: cellW - 4,
-              height: cellH - 4,
-              borderWidth: 1,
-              borderColor: accent,
-              opacity: pulse.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0.04, 0.18],
-              }),
+              left: blob.left,
+              top: blob.top,
+              width: blob.size,
+              height: blob.size,
+              borderRadius: blob.size / 2,
+              backgroundColor: blob.color,
+              opacity: 0.12,
+              transform: [
+                {
+                  translateX: driver.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-blob.dx, blob.dx],
+                  }),
+                },
+                {
+                  translateY: driver.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-blob.dy, blob.dy],
+                  }),
+                },
+                {
+                  scale: driver.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [1, blob.scale],
+                  }),
+                },
+              ],
             } as any
           }
         />
-      );
-    }
-  }
-  return <>{cells}</>;
+      ))}
+    </View>
+  );
 };
 
-const MatrixRain = ({
+const Waves = ({
   driver,
   accent,
+  focus,
+  link,
 }: {
   driver: Animated.Value;
   accent: string;
+  focus: string;
+  link: string;
 }) => {
-  // Falling columns of characters, Matrix style. One loop drives each column;
-  // its characters share the value with staggered translateY ranges. Values
-  // are created once and all loops are stopped on unmount — no render-time
-  // animation starts, and Animated.timing drives a plain Animated.Value
-  // instead of an interpolation derived from the shared driver.
-  const columns = useMemo(
-    () =>
-      Array.from({length: 10}, (_, index) => ({
-        index,
-        left: index * 44,
-        duration: 1200 + index * 200,
-        chars: Array.from(
-          {length: 6},
-          () => GRID_CHARS[Math.floor(Math.random() * GRID_CHARS.length)],
-        ),
-        value: new Animated.Value(0),
-      })),
-    [],
-  );
-
-  useEffect(() => {
-    const loops = columns.map(col =>
-      Animated.loop(
-        Animated.sequence([
-          Animated.delay(col.index * 90),
-          Animated.timing(col.value, {
-            toValue: 1,
-            duration: col.duration,
-            easing: Easing.linear,
-            useNativeDriver: true,
-          }),
-          Animated.timing(col.value, {
-            toValue: 0,
-            duration: 0,
-            easing: Easing.linear,
-            useNativeDriver: true,
-          }),
-        ]),
-      ),
-    );
-    loops.forEach(loop => loop.start());
-    return () => loops.forEach(loop => loop.stop());
-  }, [columns]);
-
-  const opacity = driver.interpolate({inputRange: [0, 1], outputRange: [0.55, 0.95]});
-  const items: React.ReactElement[] = [];
-  columns.forEach(col => {
-    col.chars.forEach((ch, r) => {
-      const fall = col.value.interpolate({
-        inputRange: [0, 1],
-        outputRange: [-160 - r * 38, 1120 + col.index * 24 + r * 38],
-      });
-      items.push(
-        <Animated.Text
-          key={`matrix-${col.index}-${r}`}
+  const bands = [
+    {top: '-18%', height: 440, color: accent, opacity: 0.14, dx: 220, dy: 60},
+    {top: '12%', height: 520, color: focus, opacity: 0.09, dx: -250, dy: -50},
+    {top: '56%', height: 480, color: link, opacity: 0.11, dx: 280, dy: 70},
+  ];
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {bands.map((band, i) => (
+        <Animated.View
+          key={i}
           style={
             {
               position: 'absolute',
-              left: col.left,
-              top: 0,
-              color: accent,
-              fontSize: 18,
-              opacity,
-              transform: [{translateY: fall}],
+              left: '-28%',
+              width: '156%',
+              top: band.top,
+              height: band.height,
+              borderRadius: band.height / 2,
+              backgroundColor: band.color,
+              opacity: band.opacity,
+              transform: [
+                {
+                  translateX: driver.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-band.dx, band.dx],
+                  }),
+                },
+                {
+                  translateY: driver.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-band.dy, band.dy],
+                  }),
+                },
+              ],
             } as any
-          }>
-          {ch}
-        </Animated.Text>
-      );
-    });
-  });
-  return <>{items}</>;
+          }
+        />
+      ))}
+    </View>
+  );
 };
 
 const Sweep = ({driver, accent}: {driver: Animated.Value; accent: string}) => (
   <Animated.View
+    pointerEvents="none"
     style={
       {
         position: 'absolute',
         top: '-25%',
         left: 0,
-        width: 240,
+        width: 260,
         height: '150%',
         backgroundColor: accent,
-        opacity: 0.12,
+        opacity: 0.11,
         transform: [
           {
             translateX: driver.interpolate({
               inputRange: [0, 1],
-              outputRange: [-400, 2200],
+              outputRange: [-450, 2300],
             }),
           },
           {rotate: '18deg'},
@@ -333,30 +233,130 @@ const Sweep = ({driver, accent}: {driver: Animated.Value; accent: string}) => (
   />
 );
 
+const Grid = ({driver, accent}: {driver: Animated.Value; accent: string}) => {
+  const cells: React.ReactElement[] = [];
+  const cellW = 180;
+  const cellH = 150;
+  for (let r = 0; r < 4; r++) {
+    for (let c = 0; c < 7; c++) {
+      cells.push(
+        <View
+          key={`grid-${r}-${c}`}
+          style={{
+            position: 'absolute',
+            left: c * cellW,
+            top: r * cellH,
+            width: cellW - 4,
+            height: cellH - 4,
+            borderWidth: 1,
+            borderColor: accent,
+            opacity: 0.06,
+          }}
+        />,
+      );
+    }
+  }
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {cells}
+      <Animated.View
+        style={
+          {
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            width: 200,
+            height: '100%',
+            backgroundColor: accent,
+            opacity: driver.interpolate({inputRange: [0, 1], outputRange: [0.015, 0.09]}),
+            transform: [
+              {
+                translateX: driver.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [-220, 2100],
+                }),
+              },
+            ],
+          } as any
+        }
+      />
+    </View>
+  );
+};
+
+/**
+ * Plain Text columns under one opacity-fading layer. The old version ran ten
+ * looping native animations over sixty Animated.Text nodes, which was far too
+ * much for the Stick's UI thread during application mount.
+ */
+const MatrixRain = ({driver, accent}: {driver: Animated.Value; accent: string}) => {
+  const columns = useMemo(
+    () =>
+      Array.from({length: 7}, (_, c) => ({
+        left: c * 48,
+        chars: Array.from(
+          {length: 7},
+          (_, r) => GRID_CHARS[(c * 11 + r * 7 + r * c) % GRID_CHARS.length],
+        ),
+      })),
+    [],
+  );
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        StyleSheet.absoluteFill,
+        {opacity: driver.interpolate({inputRange: [0, 1], outputRange: [0.55, 0.95]})},
+      ]}>
+      {columns.map(col => (
+        <View key={col.left} style={{position: 'absolute', left: col.left, top: 0}}>
+          {col.chars.map((ch, r) => (
+            <Text
+              key={r}
+              style={{
+                color: accent,
+                fontSize: 18,
+                opacity: 0.24 + (r % 3) * 0.18,
+                marginTop: 22,
+              }}>
+              {ch}
+            </Text>
+          ))}
+        </View>
+      ))}
+    </Animated.View>
+  );
+};
+
 export const Backdrop = () => {
   const {resolved} = useAppTheme();
   const active = resolved.background !== 'none';
   const speed = ENERGY_SPEED[resolved.energy];
-  const baseMs = resolved.background === 'sweep' ? 9000 : 15000;
-  const drivers = useDrivers(active, baseMs, speed);
+  const baseMs = resolved.background === 'sweep' ? 9000 : 14000;
+  const driver = useDriver(active, baseMs, speed);
 
   if (!active) {
     return null;
   }
 
   return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      {resolved.background === 'waves' ? (
-        <Waves drivers={drivers} accent={resolved.accent} focus={resolved.focus} link={resolved.link} />
-      ) : null}
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.root]}>
+      <Depth accent={resolved.accent} focus={resolved.focus} link={resolved.link} />
       {resolved.background === 'aurora' ? (
-        <Aurora drivers={drivers} accent={resolved.accent} focus={resolved.focus} link={resolved.link} />
+        <Aurora driver={driver} accent={resolved.accent} focus={resolved.focus} link={resolved.link} />
       ) : null}
-      {resolved.background === 'sweep' ? <Sweep driver={drivers[0]} accent={resolved.accent} /> : null}
-      {resolved.background === 'grid' ? <Grid driver={drivers[0]} accent={resolved.accent} /> : null}
+      {resolved.background === 'waves' ? (
+        <Waves driver={driver} accent={resolved.accent} focus={resolved.focus} link={resolved.link} />
+      ) : null}
+      {resolved.background === 'sweep' ? <Sweep driver={driver} accent={resolved.accent} /> : null}
+      {resolved.background === 'grid' ? <Grid driver={driver} accent={resolved.accent} /> : null}
       {resolved.background === 'matrix-rain' ? (
-        <MatrixRain driver={drivers[0]} accent={resolved.accent} />
+        <MatrixRain driver={driver} accent={resolved.accent} />
       ) : null}
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  root: {overflow: 'hidden'},
+});

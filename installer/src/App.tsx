@@ -423,9 +423,9 @@ const describePc = async (fy: Fyaisa): Promise<string> => {
  */
 const useFocusable = () => {
   const {styles} = useAppTheme();
-  // Press feedback: buttons scale down slightly when pressed, giving tactile
-  // confirmation on a remote with no haptics.
-  const pressScale = useRef(new Animated.Value(1)).current;
+  // Press feedback is a one-shot static scale. Kepler's native driver does not
+  // accept color or shadow interpolation, and a shared animated style on every
+  // focused row is what made the first post-intro focus abort the app.
   return useCallback(
     (base: any) => ({
       focused,
@@ -433,15 +433,19 @@ const useFocusable = () => {
     }: {focused: boolean; pressed: boolean}) => [
       base,
       focused && styles.focused,
-      pressed && {
-        transform: [{scale: pressScale.interpolate({inputRange: [0, 1], outputRange: [1, 0.95]})}],
-      },
+      pressed && {transform: [{scale: 0.97}]},
     ],
     [styles],
   );
 };
 
-const Hub = () => {
+const Hub = ({
+  introDone,
+  onIntroDone,
+}: {
+  introDone: boolean;
+  onIntroDone: () => void;
+}) => {
   const {styles, theme, applyPreset, patch, resetTheme} = useAppTheme();
   const focusable = useFocusable();
   usePreventHideSplashScreen();
@@ -456,9 +460,9 @@ const Hub = () => {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // The launch intro owns the screen first; true for the rest of the session
-  // once it has finished or been skipped.
-  const [introDone, setIntroDone] = useState(false);
+  // The intro unmounts its native animation nodes before the hub mounts. Hold
+  // one empty frame so Kepler releases those views before a row claims focus.
+  const [menuReady, setMenuReady] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // When the screen changes, crossfade out and back in. Declared after
@@ -599,6 +603,12 @@ const Hub = () => {
     clearTimeout(id);
     timeoutsRef.current.delete(id);
   }, []);
+
+  useEffect(() => {
+    if (!introDone || menuReady) return;
+    const id = trackTimeout(() => setMenuReady(true), 48);
+    return () => stopTimeout(id);
+  }, [introDone, menuReady, trackTimeout, stopTimeout]);
 
   // A delay used by update-all resolves on unmount so the loop can wind down
   // instead of holding a pending promise after its component is gone.
@@ -1798,8 +1808,11 @@ const Hub = () => {
         return true;
       }
       if (!introDone) {
-        setIntroDone(true); // first Back skips the intro, it doesn't close us
+        onIntroDone(); // first Back skips the intro, it doesn't close us
         return true;
+      }
+      if (!menuReady) {
+        return true; // brief handoff frame; don't let Back close the app
       }
       if (keyboardOpen) {
         setKeyboardOpen(false); // close the keyboard first, keep the screen under it
@@ -1816,12 +1829,15 @@ const Hub = () => {
       return true;
     });
     return () => sub.remove();
-  }, [selectedId, keyboardOpen, introDone, screenshotPreview]);
+  }, [selectedId, keyboardOpen, introDone, menuReady, onIntroDone, screenshotPreview]);
 
   // The intro plays first and owns the whole screen; the menus below don't
   // mount until it's gone, so nothing behind it can steal D-pad focus.
   if (!introDone) {
-    return <Intro onFirstFrame={hideSplash} onDone={() => setIntroDone(true)} />;
+    return <Intro onFirstFrame={hideSplash} onDone={onIntroDone} />;
+  }
+  if (!menuReady) {
+    return null;
   }
 
   // Full-screen screenshot preview modal — overlays everything, D-pad exits.
@@ -2155,7 +2171,7 @@ const Hub = () => {
             </View>
           ) : null}
 
-          <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
+          <Pressable style={focusable(styles.backBtn)} onPress={() => setSelectedId(null)}>
             <Text style={styles.backText}>Back</Text>
           </Pressable>
         </ScrollView>
@@ -2756,7 +2772,6 @@ const Hub = () => {
                   </Text>
                 ) : (
                   <Pressable
-                    hasTVPreferredFocus
                     style={focusable(styles.installBtn)}
                     onPress={() => requestInstall(selected.id)}>
                     <Text style={styles.backText}>
@@ -2827,7 +2842,12 @@ const Hub = () => {
             <Text style={styles.howtoBody}>Hub: {HUB_URL}</Text>
           </View>
 
-          <Pressable hasTVPreferredFocus style={focusable(styles.backBtn)} onPress={() => setSelectedId('__apps__')}>
+          <Pressable
+            hasTVPreferredFocus={
+              pair.status !== 'paired' || !pair.host || syncing || appState(selected) === 'current'
+            }
+            style={focusable(styles.backBtn)}
+            onPress={() => setSelectedId('__apps__')}>
             <Text style={styles.backText}>Back to catalog</Text>
           </Pressable>
         </ScrollView>
@@ -3199,7 +3219,7 @@ const SwatchGrid = ({
   );
 };
 
-const makeStyles = (t: ResolvedTheme, focusPulse: Animated.Value) => {
+const makeStyles = (t: ResolvedTheme) => {
   // A button's resting border, so "Outline" reads as outlined and the others
   // stay flush with the surface (a transparent 4px border keeps layout stable
   // when the focus ring appears).
@@ -3604,27 +3624,18 @@ const makeStyles = (t: ResolvedTheme, focusPulse: Animated.Value) => {
   toolOutText: {color: t.textBody, fontSize: 13, fontFamily: 'monospace', lineHeight: 19},
   focused: {
     borderWidth: 4,
-    // Animated pulse: ring breathes between surface and focus colour.
-    // Cast the interpolation at the boundary; RN's style types don't model
-    // AnimatedInterpolation values even though the runtime does.
-    borderColor: focusPulse
-      ? (focusPulse.interpolate({
-          inputRange: [0, 1],
-          outputRange: [t.surface, t.focus],
-        }) as any)
-      : (t.focus as any),
-    // "Flat" keeps a crisp ring; "glow" and "outline" add the halo.
+    // Static ring. Kepler's native driver rejects animated colors and shadows;
+    // the first focused row after the intro was aborting the process. Motion
+    // lives in the backdrop and the intro, not in focus styles.
+    borderColor: t.focus,
     ...(t.buttonEffect === 'flat'
       ? {}
       : {
           shadowColor: t.focus,
-          shadowOpacity: focusPulse.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.35, 0.85],
-          }),
-          shadowRadius: 10,
+          shadowOpacity: 0.55,
+          shadowRadius: 9,
           shadowOffset: {width: 0, height: 0},
-          elevation: 10,
+          elevation: 8,
         }),
   },
   job: {marginTop: 14},
@@ -3687,47 +3698,24 @@ const makeStyles = (t: ResolvedTheme, focusPulse: Animated.Value) => {
 };
 
 /**
- * The backdrops (animated background) always sit one layer below the current
- * screen, so an effect never covers content or grabs D-pad focus from a row.
+ * The backdrop sits one layer below the current screen, never takes input, and
+ * starts only after the intro has released its native animation nodes. On a
+ * Fire TV Stick that keeps the whole ambient layer off the launch path.
  */
 const Shell = () => {
   const {styles} = useAppTheme();
+  const [introDone, setIntroDone] = useState(false);
+  const onIntroDone = useCallback(() => setIntroDone(true), []);
   return (
     <View style={styles.root}>
-      <Backdrop />
-      <Hub />
+      {introDone ? <Backdrop /> : null}
+      <Hub introDone={introDone} onIntroDone={onIntroDone} />
     </View>
   );
 };
 
 export const App = () => {
-  // The focus ring's pulse is shared by every stylesheet generation. It is
-  // created here, above ThemeProvider, so makeStyles never reaches for a value
-  // owned by a component that mounts later (or by a stale module-level ref).
-  const focusPulse = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(focusPulse, {
-          toValue: 1,
-          duration: 1400,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(focusPulse, {
-          toValue: 0,
-          duration: 1400,
-          easing: Easing.inOut(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [focusPulse]);
-
-  const stylesForTheme = useCallback((t: ResolvedTheme) => makeStyles(t, focusPulse), [focusPulse]);
-
+  const stylesForTheme = useCallback((t: ResolvedTheme) => makeStyles(t), []);
   return (
     <ThemeProvider makeStyles={stylesForTheme}>
       <Shell />

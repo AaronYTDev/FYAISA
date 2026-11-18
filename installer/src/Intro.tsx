@@ -17,7 +17,7 @@
  */
 import * as React from 'react';
 import {useCallback, useEffect, useMemo, useRef} from 'react';
-import {Animated, Easing, StyleSheet, Text, useWindowDimensions} from 'react-native';
+import {Animated, Easing, StyleSheet, Text, useWindowDimensions, View} from 'react-native';
 import {Pressable} from '@amazon-devices/react-native-kepler';
 import {useAppTheme} from './theme';
 
@@ -48,6 +48,7 @@ export const Intro = ({
   const enter = useRef(new Animated.Value(0)).current;
   const spread = useRef(new Animated.Value(0)).current;
   const leave = useRef(new Animated.Value(0)).current;
+  const runRef = useRef<{stop: () => void} | null>(null);
   const done = useRef(false);
   // The parent hands down a fresh callback every render; hold it in a ref so
   // `finish` stays stable and the timeline effect below runs exactly once.
@@ -61,6 +62,9 @@ export const Intro = ({
       return;
     }
     done.current = true;
+    // Stop before the parent unmounts this tree. A native animation callback
+    // that unmounts its own nodes on the Kepler UI thread can abort the app.
+    runRef.current?.stop();
     onDoneRef.current();
   }, []);
 
@@ -144,8 +148,14 @@ export const Intro = ({
         useNativeDriver: true,
       }),
     ]);
+    runRef.current = run;
     run.start(({finished}) => finished && finish());
-    return () => run.stop();
+    return () => {
+      run.stop();
+      if (runRef.current === run) {
+        runRef.current = null;
+      }
+    };
   }, [enter, spread, leave, finish]);
 
   const {letters, words, letterF, wordF, rowHeight, wordTop, fullTotal, rowShift} = layout;
@@ -157,6 +167,45 @@ export const Intro = ({
       onPress={finish}
       onLayout={onFirstFrame}
       style={[styles.fill, {backgroundColor: resolved.bg}]}>
+      {/* Static coloured depth behind the wordmark. It reuses the intro's two
+          existing native values, so it adds no extra animation loop. */}
+      <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.centerLayer]}>
+        <Animated.View
+          style={
+            {
+              width: width * 0.86,
+              height: width * 0.34,
+              borderRadius: width * 0.17,
+              backgroundColor: resolved.accent,
+              opacity: enter.interpolate({inputRange: [0, 1], outputRange: [0, 0.1]}),
+              transform: [
+                {scale: spread.interpolate({inputRange: [0, 1], outputRange: [0.82, 1.08]})},
+              ],
+            } as any
+          }
+        />
+        <Animated.View
+          style={
+            {
+              position: 'absolute',
+              right: width * 0.06,
+              width: width * 0.38,
+              height: width * 0.26,
+              borderRadius: width * 0.13,
+              backgroundColor: resolved.focus,
+              opacity: enter.interpolate({inputRange: [0, 1], outputRange: [0, 0.07]}),
+              transform: [
+                {
+                  translateX: spread.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-width * 0.08, width * 0.05],
+                  }),
+                },
+              ],
+            } as any
+          }
+        />
+      </View>
       <Animated.View
         style={
           {
@@ -284,4 +333,5 @@ export const Intro = ({
 
 const styles = StyleSheet.create({
   fill: {flex: 1, alignItems: 'center', justifyContent: 'center'},
+  centerLayer: {alignItems: 'center', justifyContent: 'center'},
 });
