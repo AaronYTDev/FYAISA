@@ -2,7 +2,7 @@ schema-version = 1
 
 [package]
 title = "Cinevega"
-version = "1.0.2"
+version = "1.0.3"
 id = "app.cinevega"
 icon = "@image/cinevega.png"
 

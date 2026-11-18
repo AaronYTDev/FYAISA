@@ -163,7 +163,7 @@
       "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "updated": "2026-11-18",
       "install": {
         "kind": "vpkg-release",
@@ -175,6 +175,7 @@
         "Fixed: declares com.amazon.network.service so TMDB and VidSrc can be reached.",
         "Fixed: VidSrc mirror fallbacks (vidsrc.to, .cc, .xyz, .pro, .net) — if one domain dies, the app tries the next.",
         "1.0.2: mirror failover hardened and lockfile aligned.",
+        "1.0.3: D-pad cursor in the player, OK clicks the page instead of exiting, chrome auto-hides on playback, ElevSH host prefilled with 192.168.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },

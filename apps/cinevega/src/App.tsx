@@ -44,7 +44,7 @@ const CINEVEGA_APP_ID = 'app.cinevega.main';
 const HUB_CATALOG_URL =
   'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json';
 const STORE_PATH = '/data/bridge.json';
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.0.3';
 
 // --- TMDB cache ---------------------------------------------------------------
 // TMDB responses are cached to this app's private /data so the home screen
@@ -319,6 +319,281 @@ const buildPlayerUrl = (
 // one failure per mirror per second is enough to walk the list.
 const PLAYER_FAILURE_COOLDOWN_MS = 1000;
 
+/** Home LANs are almost always 192.168.x.y. Open the ElevSH box with that much. */
+const HOST_PREFIX = '192.168.';
+/** Bare host only: strip anything pasted from a browser or the CLI. */
+const normalizeHost = (raw: string): string =>
+  String(raw || '')
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '')
+    .trim();
+/** True only when the catalog advertises a newer build than the one installed. */
+const isNewerVersion = (remote: string, local: string): boolean => {
+  const parse = (v: string) =>
+    String(v || '')
+      .split('+')[0]
+      .split('-')[0]
+      .split('.')
+      .map(part => parseInt(part, 10) || 0);
+  const a = parse(remote);
+  const b = parse(local);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const x = a[i] ?? 0;
+    const y = b[i] ?? 0;
+    if (x !== y) return x > y;
+  }
+  return false;
+};
+
+/** Reject junk before a pairing request wasting a round trip. */
+const hostFilled = (h: string): boolean => {
+  const host = normalizeHost(h);
+  if (host === 'localhost') return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    return host.split('.').every(part => parseInt(part, 10) <= 255);
+  }
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(host);
+};
+
+/**
+ * Injected into the VidSrc WebView on every load. Menu flips between page
+ * control and a drawn D-pad cursor; OK clicks the play control (or whatever is
+ * under the pointer); arrow keys reveal the native chrome and, in cursor mode,
+ * move the pointer before the page sees them. Clicks are single-flighted so the
+ * page's keydown handler and the native remote hook cannot fire twice.
+ */
+const PLAYER_CURSOR_SCRIPT = `
+(function () {
+  var mode = 'page';
+  var cur = {x: -1, y: -1};
+  var cursorEl = null;
+  var toastEl = null;
+  var toastTimer = 0;
+  var lastClick = 0;
+  var lastActivity = 0;
+
+  function post(obj) {
+    try { window.ReactNativeWebView.postMessage(JSON.stringify(obj)); } catch (e) {}
+  }
+  function log(msg) { post({type: 'LOG', message: msg}); }
+  function activity() {
+    var now = Date.now();
+    if (now - lastActivity > 250) {
+      lastActivity = now;
+      post({type: 'PLAYER_ACTIVITY'});
+    }
+  }
+
+  function toast(text) {
+    try {
+      if (toastEl && toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
+      window.clearTimeout(toastTimer);
+      toastEl = document.createElement('div');
+      toastEl.textContent = text;
+      toastEl.style.cssText =
+        'position:fixed;left:50%;top:7%;transform:translateX(-50%);' +
+        'z-index:2147483647;pointer-events:none;' +
+        'background:rgba(0,0,0,0.82);color:#fff;' +
+        'font:600 16px sans-serif;padding:10px 18px;border-radius:999px;';
+      (document.body || document.documentElement).appendChild(toastEl);
+      toastTimer = window.setTimeout(function () {
+        if (toastEl && toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
+        toastEl = null;
+      }, 1600);
+    } catch (e) {}
+  }
+
+  var ARROW_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='22' height='24'>" +
+    "<path d='M3 1 L3 19 L8 14.5 L11 21 L14.5 20 L11.5 14 L18 13.5 Z' " +
+    "fill='white' stroke='black' stroke-width='1.4' stroke-linejoin='round'/></svg>";
+
+  function ensureCursor() {
+    if (cursorEl && cursorEl.parentNode) return;
+    cursorEl = document.createElement('div');
+    cursorEl.style.cssText =
+      'position:fixed;width:22px;height:24px;z-index:2147483647;' +
+      'pointer-events:none;display:none;background-repeat:no-repeat;' +
+      'background-image:url("data:image/svg+xml;charset=utf-8,' +
+      encodeURIComponent(ARROW_SVG) + '");';
+    (document.body || document.documentElement).appendChild(cursorEl);
+  }
+
+  function drawCursor() {
+    ensureCursor();
+    cursorEl.style.left = cur.x + 'px';
+    cursorEl.style.top = cur.y + 'px';
+    cursorEl.style.display = 'block';
+  }
+
+  function moveCursor(key) {
+    var step = 48;
+    if (key === 'ArrowUp') cur.y -= step;
+    if (key === 'ArrowDown') cur.y += step;
+    if (key === 'ArrowLeft') cur.x -= step;
+    if (key === 'ArrowRight') cur.x += step;
+    cur.x = Math.max(0, Math.min(window.innerWidth - 1, cur.x));
+    cur.y = Math.max(0, Math.min(window.innerHeight - 1, cur.y));
+    drawCursor();
+    activity();
+  }
+
+  window.__cinevegaToggleCursor = function () {
+    mode = mode === 'cursor' ? 'page' : 'cursor';
+    post({type: 'PLAYER_CURSOR_MODE', on: mode === 'cursor'});
+    if (mode === 'cursor') {
+      if (cur.x < 0) {
+        cur.x = Math.floor(window.innerWidth / 2);
+        cur.y = Math.floor(window.innerHeight / 2);
+      }
+      drawCursor();
+      toast('Cursor mode: arrows move, OK clicks');
+    } else {
+      if (cursorEl && cursorEl.parentNode) cursorEl.style.display = 'none';
+      toast('D-pad controls the player');
+    }
+    activity();
+    log('cursor mode ' + mode);
+  };
+
+  function visible(el) {
+    if (!el || !el.getBoundingClientRect) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width < 4 || r.height < 4) return false;
+    var s = window.getComputedStyle(el);
+    return s.visibility !== 'hidden' && s.display !== 'none' && s.opacity !== '0';
+  }
+
+  function playButton() {
+    var list = document.querySelectorAll(
+      'button,[role=button],a,input[type=button],input[type=submit]');
+    for (var i = 0; i < list.length; i++) {
+      var el = list[i];
+      if (!visible(el)) continue;
+      var text = ((el.textContent || el.value || '') + ' ' +
+        (el.getAttribute('aria-label') || '')).toLowerCase();
+      if (/play|start|resume|watch|continue|click here|unmute/.test(text)) {
+        return el;
+      }
+    }
+    return null;
+  }
+
+  function dispatchClick(target, x, y) {
+    target.dispatchEvent(new MouseEvent('mousemove',
+      {bubbles: true, cancelable: true, clientX: x, clientY: y}));
+    target.dispatchEvent(new PointerEvent('pointerdown',
+      {bubbles: true, cancelable: true, clientX: x, clientY: y,
+       button: 0, buttons: 1, pointerId: 1, isPrimary: true,
+       pointerType: 'mouse'}));
+    target.dispatchEvent(new MouseEvent('mousedown',
+      {bubbles: true, cancelable: true, clientX: x, clientY: y,
+       button: 0, buttons: 1}));
+    target.dispatchEvent(new PointerEvent('pointerup',
+      {bubbles: true, cancelable: true, clientX: x, clientY: y,
+       button: 0, buttons: 0, pointerId: 1, isPrimary: true,
+       pointerType: 'mouse'}));
+    target.dispatchEvent(new MouseEvent('mouseup',
+      {bubbles: true, cancelable: true, clientX: x, clientY: y,
+       button: 0, buttons: 0}));
+    target.dispatchEvent(new MouseEvent('click',
+      {bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0}));
+  }
+
+  window.__cinevegaClick = function () {
+    var now = Date.now();
+    if (now - lastClick < 350) {
+      log('click ignored (double)');
+      return;
+    }
+    lastClick = now;
+    activity();
+    try {
+      var target = null;
+      var x = 0;
+      var y = 0;
+      var how = '';
+      if (mode === 'cursor') {
+        x = cur.x;
+        y = cur.y;
+        target = document.elementFromPoint(x, y);
+        how = 'cursor';
+      } else {
+        target = playButton();
+        if (target) {
+          var r = target.getBoundingClientRect();
+          x = Math.floor(r.left + r.width / 2);
+          y = Math.floor(r.top + r.height / 2);
+          how = 'play button';
+        } else {
+          var video = document.querySelector('video');
+          if (video && video.paused) {
+            try {
+              var p = video.play();
+              if (p && p.catch) p.catch(function () {});
+            } catch (e) {}
+            log('click: video.play()');
+            return;
+          }
+          x = Math.floor(window.innerWidth / 2);
+          y = Math.floor(window.innerHeight / 2);
+          target = document.elementFromPoint(x, y);
+          how = 'center';
+        }
+      }
+      if (!target) {
+        log('click: nothing under ' + how);
+        return;
+      }
+      var tag = target.tagName || '';
+      var role = target.getAttribute && target.getAttribute('role');
+      if (tag === 'BUTTON' || tag === 'A' || tag === 'INPUT' ||
+          tag === 'LABEL' || role === 'button' || target.onclick) {
+        target.click();
+      } else {
+        dispatchClick(target, x, y);
+      }
+      log('click: ' + how + ' -> ' + tag + '.' + (target.className || '-'));
+    } catch (e) {
+      log('click failed: ' + e);
+    }
+  };
+
+  window.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k === 'Enter' || e.keyCode === 13) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      window.__cinevegaClick();
+      return;
+    }
+    if (k === 'ArrowUp' || k === 'ArrowDown' ||
+        k === 'ArrowLeft' || k === 'ArrowRight') {
+      if (mode === 'cursor') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        moveCursor(k);
+      } else {
+        activity();
+      }
+      return;
+    }
+    activity();
+  }, true);
+
+  post({type: 'PLAYER_CURSOR_MODE', on: false});
+  log('player cursor script ready');
+  true;
+})();
+`;
+const PLAYER_CLICK_SCRIPT =
+  'window.__cinevegaClick&&window.__cinevegaClick();true;';
+const PLAYER_CURSOR_TOGGLE_SCRIPT =
+  'window.__cinevegaToggleCursor&&window.__cinevegaToggleCursor();true;';
+/** Native chrome hides this long after the last remote or cursor activity. */
+const PLAYER_CHROME_MS = 4000;
+
 // --- ElevSH pairing persistence ----------------------------------------------
 type SavedPair = {host: string; token?: string};
 
@@ -363,7 +638,7 @@ export const App = () => {
   // FYAISA panel
   const [menu, setMenu] = useState<'hidden' | 'menu' | 'pair'>('menu');
   const [pair, setPair] = useState<SavedPair | null>(null);
-  const [pairHost, setPairHost] = useState('');
+  const [pairHost, setPairHost] = useState(HOST_PREFIX);
   const [pairCode, setPairCode] = useState<string | null>(null);
   const [hubStatus, setHubStatus] = useState('Checking the FYAISA hub…');
   const [updateVersion, setUpdateVersion] = useState<string | null>(null);
@@ -391,6 +666,11 @@ export const App = () => {
   const [playerEpisode, setPlayerEpisode] = useState<Episode | null>(null);
   const [playerError, setPlayerError] = useState<string | null>(null);
   const [playerNotice, setPlayerNotice] = useState<string | null>(null);
+  const [playerChromeVisible, setPlayerChromeVisible] = useState(true);
+  const [cursorMode, setCursorMode] = useState(false);
+  const playerWebRef = useRef<any>(null);
+  const playerChromeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cursorModeRef = useRef(false);
   const playerAttemptRef = useRef(0);
   const lastPlayerFailRef = useRef(0);
 
@@ -433,7 +713,7 @@ export const App = () => {
             hubVersion ? `v${hubVersion}` : 'listed'
           }`,
         );
-        if (hubVersion && hubVersion !== APP_VERSION) {
+        if (hubVersion && isNewerVersion(hubVersion, APP_VERSION)) {
           setUpdateVersion(hubVersion);
         }
       } catch {
@@ -485,10 +765,35 @@ export const App = () => {
     return () => sub.remove();
   }, [screen, menu]);
 
-  // TV event handler for the player: with allowSystemKeyEvents off, all keys
-  // go to the WebView, so intercept Back/Menu here to give the remote a
-  // reliable way out of the player. On other screens the native focus rings
-  // handle D-pad navigation normally.
+  // Player chrome hides while a movie plays and comes back on remote activity.
+  // Any event in the player counts; page-side arrow/cursor moves post the same
+  // reveal through onMessage. Errors and mirror notices hold it open.
+  const revealPlayerChrome = useCallback(() => {
+    setPlayerChromeVisible(true);
+    if (playerChromeTimerRef.current) clearTimeout(playerChromeTimerRef.current);
+    playerChromeTimerRef.current = setTimeout(() => {
+      setPlayerChromeVisible(false);
+    }, PLAYER_CHROME_MS);
+  }, []);
+
+  useEffect(() => {
+    if (screen !== 'player' || playerError || playerNotice) {
+      if (playerChromeTimerRef.current) clearTimeout(playerChromeTimerRef.current);
+      playerChromeTimerRef.current = null;
+      setPlayerChromeVisible(true);
+      return;
+    }
+    revealPlayerChrome();
+    return () => {
+      if (playerChromeTimerRef.current) clearTimeout(playerChromeTimerRef.current);
+      playerChromeTimerRef.current = null;
+    };
+  }, [screen, playerError, playerNotice, revealPlayerChrome]);
+
+  // TV event handler for the player: Back exits, Menu switches the page between
+  // D-pad control and a drawn cursor, OK clicks. Everything else stays with the
+  // WebView and only wakes the chrome. The injected page script single-flights
+  // clicks, so its own Enter handler and this hook cannot double-fire.
   useTVEventHandler(
     useCallback((event: HWEvent) => {
       if (event.eventKeyAction !== 0) {
@@ -497,16 +802,24 @@ export const App = () => {
       if (screen !== 'player') {
         return;
       }
+      revealPlayerChrome();
       const type = event.eventType;
-      if (type === 'back' || type === 'select') {
-        // Back exits the player; OK/Enter when nothing is focused in the page
-        // also exits rather than getting lost inside the video.
+      if (type === 'back') {
         setScreen('detail');
-      } else if (type === 'menu') {
-        // Menu returns to the detail screen too.
-        setScreen('detail');
+        return;
       }
-    }, [screen]),
+      const web = playerWebRef.current as any;
+      if (!web?.injectJavaScript) return;
+      try {
+        if (type === 'menu') {
+          web.injectJavaScript(PLAYER_CURSOR_TOGGLE_SCRIPT);
+        } else if (type === 'select') {
+          web.injectJavaScript(PLAYER_CLICK_SCRIPT);
+        }
+      } catch (err) {
+        console.warn('[cinevega] remote inject failed:', err);
+      }
+    }, [screen, revealPlayerChrome]),
   );
 
   // Discover the bridge on this PC via the reverse tunnel (fyaisa connect
@@ -553,7 +866,7 @@ export const App = () => {
       if (e instanceof FyaisaError && e.status === 401) {
         await clearPair();
         setPair(null);
-        setPairHost('');
+        setPairHost(HOST_PREFIX);
         setHubStatus('ElevSH pairing expired — pair again from the menu');
       } else if (e instanceof FyaisaError && e.code === 'access_denied') {
         setHubStatus('ElevSH access denied for Cinevega — allow it in FYAISA');
@@ -567,9 +880,9 @@ export const App = () => {
 
   const startPair = useCallback(
     async (hostArg?: string) => {
-      const host = (hostArg ?? pairHost).trim();
-      if (!host) {
-        setHubStatus('Enter your computer’s address first');
+      const host = normalizeHost(hostArg ?? pairHost);
+      if (!hostFilled(host)) {
+        setHubStatus('Enter a complete address, e.g. 192.168.1.50');
         return;
       }
       try {
@@ -582,7 +895,7 @@ export const App = () => {
             ? 'ElevSH access already allowed — connecting…'
             : `Allow Cinevega in FYAISA → ElevSH (code ${code})`,
         );
-        const p = await Fyaisa.waitForApproval(host, code, BRIDGE_PORT, 2000, 600000, {
+        const p = await Fyaisa.waitForApproval(host, code, BRIDGE_PORT, 1000, 600000, {
           appId: CINEVEGA_APP_ID,
         });
         await savePair(p);
@@ -606,7 +919,7 @@ export const App = () => {
   const forget = useCallback(async () => {
     await clearPair();
     setPair(null);
-    setPairHost('');
+    setPairHost(HOST_PREFIX);
     setHubStatus('ElevSH pairing forgotten');
   }, []);
 
@@ -709,7 +1022,7 @@ export const App = () => {
       if (!native.url) return true;
       try {
         const current = new URL(playerUrl || VIDSRC_BASES[0]);
-        return new URL(native.url).hostname === current.hostname;
+        return (new URL(native.url) as any).hostname === (current as any).hostname;
       } catch {
         return true;
       }
@@ -717,7 +1030,50 @@ export const App = () => {
     [playerUrl],
   );
 
+  // Mirror changes remount the WebView contents. Re-inject on every load, and
+  // restore cursor mode when a mirror swap happens mid-cursor.
+  const handlePlayerLoad = useCallback(() => {
+    const web = playerWebRef.current as any;
+    if (!web?.injectJavaScript) {
+      console.warn('[cinevega] injectJavaScript unavailable on player WebView');
+      return;
+    }
+    try {
+      web.injectJavaScript(PLAYER_CURSOR_SCRIPT);
+      if (cursorModeRef.current) {
+        web.injectJavaScript(PLAYER_CURSOR_TOGGLE_SCRIPT);
+      }
+    } catch (err) {
+      console.warn('[cinevega] player inject failed:', err);
+    }
+  }, []);
+
+  const handlePlayerMessage = useCallback(
+    (event: any) => {
+      let msg: any;
+      try {
+        msg = JSON.parse(event?.nativeEvent?.data || '');
+      } catch {
+        return; // not our JSON
+      }
+      if (msg?.type === 'PLAYER_CURSOR_MODE') {
+        const on = !!msg.on;
+        cursorModeRef.current = on;
+        setCursorMode(on);
+        revealPlayerChrome();
+      } else if (msg?.type === 'PLAYER_ACTIVITY') {
+        revealPlayerChrome();
+      } else if (msg?.type === 'LOG') {
+        console.info(`[cinevega] web: ${msg.message}`);
+      }
+    },
+    [revealPlayerChrome],
+  );
+
   const startPlayback = useCallback((item: MediaItem, episode: Episode | null) => {
+    cursorModeRef.current = false;
+    setCursorMode(false);
+    setPlayerChromeVisible(true);
     setPlayerTitle(
       episode
         ? `${item.title} - S${episode.season_number} E${episode.episode_number}`
@@ -979,12 +1335,9 @@ export const App = () => {
   // --- Render: Player Screen -------------------------------------------------
   const renderPlayer = () => {
     if (!playerUrl) return null;
-    return (
-      <View style={styles.container}>
-        <View style={styles.playerHeader}>
-          <Text style={styles.playerTitle}>{playerTitle}</Text>
-        </View>
-        {playerError ? (
+    if (playerError) {
+      return (
+        <View style={styles.container}>
           <View style={styles.playerErrorContainer}>
             <Text style={styles.playerErrorText}>{playerError}</Text>
             <Pressable
@@ -999,45 +1352,55 @@ export const App = () => {
               <Text style={styles.backBtnText}>Back</Text>
             </Pressable>
           </View>
-        ) : (
-          <>
-            <WebView
-              source={{uri: playerUrl}}
-              style={styles.playerWebView}
-              javaScriptEnabled
-              domStorageEnabled
-              allowsDefaultMediaControl
-              mediaPlaybackRequiresUserAction={false}
-              allowSystemKeyEvents={false}
-              // VidSrc embeds check the referer; sending the VidSrc host as the
-              // referer helps the player accept the request.
-              originWhitelist={['*']}
-              onHttpError={(event: any) => {
-                if (!isMainFrameFailure(event)) return;
-                handlePlayerFailure(
-                  `VidSrc HTTP ${event?.nativeEvent?.statusCode}`,
-                );
-              }}
-              onError={(event: any) => {
-                if (!isMainFrameFailure(event)) return;
-                handlePlayerFailure(
-                  `VidSrc load error: ${event?.nativeEvent?.description || 'unknown'}`,
-                );
-              }}
-            />
-            {playerNotice && !playerError ? (
-              <View style={styles.playerNotice} pointerEvents="none">
-                <Text style={styles.playerNoticeText}>{playerNotice}</Text>
-              </View>
-            ) : null}
-            <Pressable
-              hasTVPreferredFocus
-              style={({focused}) => [styles.backBtn, focused && styles.focusedRing]}
-              onPress={() => setScreen('detail')}>
-              <Text style={styles.backBtnText}>Back</Text>
-            </Pressable>
-          </>
-        )}
+        </View>
+      );
+    }
+    return (
+      <View style={styles.container}>
+        <WebView
+          ref={playerWebRef}
+          source={{uri: playerUrl}}
+          style={styles.playerWebView}
+          javaScriptEnabled
+          domStorageEnabled
+          allowsDefaultMediaControl
+          mediaPlaybackRequiresUserAction={false}
+          allowSystemKeyEvents={false}
+          hasTVPreferredFocus
+          // VidSrc embeds check the referer; sending the VidSrc host as the
+          // referer helps the player accept the request. Not in Amazon's prop
+          // type, same cast the other WebView apps use.
+          {...({originWhitelist: ['*']} as any)}
+          onLoad={handlePlayerLoad}
+          onMessage={handlePlayerMessage}
+          onHttpError={(event: any) => {
+            if (!isMainFrameFailure(event)) return;
+            handlePlayerFailure(`VidSrc HTTP ${event?.nativeEvent?.statusCode}`);
+          }}
+          onError={(event: any) => {
+            if (!isMainFrameFailure(event)) return;
+            handlePlayerFailure(
+              `VidSrc load error: ${event?.nativeEvent?.description || 'unknown'}`,
+            );
+          }}
+        />
+        {/* Chrome unmounts when hidden: no invisible Pressable can steal D-pad
+            focus from the page, and OK always reaches the video's play button. */}
+        {playerChromeVisible ? (
+          <View style={styles.playerChrome} pointerEvents="none">
+            <Text style={styles.playerChromeTitle}>{playerTitle}</Text>
+            <Text style={styles.playerChromeHint}>
+              {cursorMode
+                ? 'Cursor: arrows move · OK clicks · Menu: D-pad'
+                : 'OK clicks play · Menu: cursor · Back exits'}
+            </Text>
+          </View>
+        ) : null}
+        {playerNotice ? (
+          <View style={styles.playerNotice} pointerEvents="none">
+            <Text style={styles.playerNoticeText}>{playerNotice}</Text>
+          </View>
+        ) : null}
       </View>
     );
   };
@@ -1231,14 +1594,17 @@ const FyaisaMenu = ({
             Enter your computer’s address, then Get pairing code.
           </Text>
           <View style={styles.keypad}>
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map(k => (
+            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫', 'C'].map(k => (
               <Pressable
                 key={k}
                 style={focusRing}
                 onPress={() => {
-                    const newHost = k === '⌫' ? pairHost.slice(0, -1) : pairHost + k;
-                    setPairHost(newHost);
-                  }}>
+                  const newHost =
+                    k === 'C' ? HOST_PREFIX
+                    : k === '⌫' ? pairHost.slice(0, -1)
+                    : pairHost + k;
+                  setPairHost(newHost);
+                }}>
                 <View style={styles.key}>
                   <Text style={styles.keyText}>{k}</Text>
                 </View>
@@ -1476,12 +1842,22 @@ const styles = StyleSheet.create({
   episodeTitle: {color: '#8b8b99', fontSize: 12, marginTop: 2},
 
   // Player
-  playerHeader: {paddingHorizontal: 40, paddingTop: 20, paddingBottom: 12},
-  playerTitle: {color: '#fff', fontSize: 24, fontWeight: '700'},
   playerWebView: {flex: 1, backgroundColor: '#000'},
+  playerChrome: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 40,
+    paddingTop: 18,
+    paddingBottom: 26,
+    backgroundColor: 'rgba(0,0,0,0.58)',
+  },
+  playerChromeTitle: {color: '#fff', fontSize: 20, fontWeight: '700'},
+  playerChromeHint: {color: '#c9c9d4', fontSize: 13, marginTop: 6},
   playerNotice: {
     position: 'absolute',
-    top: 72,
+    top: 92,
     left: 40,
     backgroundColor: 'rgba(0,0,0,0.78)',
     paddingHorizontal: 14,

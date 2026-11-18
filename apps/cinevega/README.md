@@ -21,10 +21,15 @@ captchas, no sign-up; the stick just needs to be online.
 - **Home** — rows for Trending, Popular Movies and Popular TV.
 - **Search** — type with the on-screen keyboard, pick from the results grid.
 - **Detail** — overview and rating, plus the episode list for TV.
-- **Player** — the VidSrc embed, with Back to leave.
+- **Player** — the VidSrc embed, with a D-pad cursor and auto-hiding chrome.
 
 D-pad moves focus, OK opens a title or plays, Back goes up a screen, Home
-exits.
+exits. In the player, OK clicks the page's play control (or the video itself)
+instead of leaving. Press Menu to switch between D-pad control and a visible
+cursor: arrows move the pointer and OK clicks whatever is under it. The title
+bar and the control hint hide after four seconds and come back on any remote
+key or cursor movement, so they never sit on top of the movie or steal focus.
+Back always leaves the player.
 
 ## Build
 
@@ -39,6 +44,20 @@ Or from the repo root:
 ```bash
 ./fyaisa install app.cinevega.main
 ```
+
+## What was fixed (1.0.3)
+
+- **Cursor mode in the player** — Menu toggles a drawn, D-pad-driven pointer.
+  OK clicks at the pointer, so a play button you can see is a play button you
+  can actually press.
+- **OK no longer exits the player** — it clicks the page's play control, the
+  paused video, or the screen center. Back is the way out.
+- **Auto-hiding player chrome** — the title and hint unmount after four seconds
+  of no activity and return on any key or cursor move. Hidden controls cannot
+  hold TV focus.
+- **ElevSH address prefilled with `192.168.`** in Cinevega's pairing menu, with
+  a `C` key to reset it. Hosts are normalised (pasted URLs and ports stripped)
+  and validated before a request, and approval polling is twice as fast.
 
 ## What was fixed (1.0.1)
 
