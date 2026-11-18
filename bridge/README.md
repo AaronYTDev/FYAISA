@@ -34,8 +34,8 @@ Stop it with:
 fyaisa disconnect
 ```
 
-which calls `POST /shutdown` (token; hub app or headerless host tools only)
-and falls back to terminating the local bridge process if HTTP fails.
+which calls `POST /shutdown` (token plus the hub app header) and falls back to
+terminating the local bridge process if HTTP fails.
 
 When the TV app requests a pairing code, approve it either on the PC:
 
@@ -76,19 +76,19 @@ Options:
 | `GET` | `/ping` | no | liveness |
 | `POST` | `/pair/request` | no | get a 6-digit pairing code (10 min TTL); send `X-FYAISA-App` so FYAISA can see + auto-approve it |
 | `GET` | `/pair/status?code=` | no | has the code been approved? |
-| `POST` | `/pair/approve` | no | exchange code → token (also allows that app's ElevSH access) |
+| `POST` | `/pair/approve` | no | approve with `device: fyaisa-cli`, then the original device exchanges code → token from the same address |
 | `GET` | `/access/status?appId=` | no | has this app been allowed/denied yet? |
 | `GET` | `/catalog` | token | current catalog |
 | `POST` | `/install` | token | `{appId}` → `{jobId}`, reconnects vda to the requesting TV, then builds + installs. Add `patch: true` for a patch install: the app is rebuilt under its catalog `patch.for` identity (original's app id + display name, version forced to `99.99.99`), the original is uninstalled after the build succeeds and before the patch is installed; see "Patch installs" in [`docs/HOMEBREW.md`](../docs/HOMEBREW.md) |
 | `GET` | `/job?id=` | token | job status + build log |
 | `GET` | `/jobs` | token | all jobs |
-| `POST` | `/uninstall` | token (hub/host tools) | `{appId}` → remove the app from the device (`vega device uninstall-app`), `{ok, exitCode, log}` |
-| `GET` | `/pair/pending` | token (FYAISA) | app pairing requests waiting for a decision |
-| `GET` | `/access` | token (FYAISA) | the allow/deny list: `{apps: [{appId, status}]}` |
-| `POST` | `/access` | token (FYAISA) | `{appId, decision: allow \| deny \| revoke}` |
+| `POST` | `/uninstall` | token + hub header | `{appId}` → remove the app from the device (`vega device uninstall-app`), `{ok, exitCode, log}` |
+| `GET` | `/pair/pending` | token + hub header | app pairing requests waiting for a decision |
+| `GET` | `/access` | token + hub header | the allow/deny list: `{apps: [{appId, status}]}` |
+| `POST` | `/access` | token + hub header | `{appId, decision: allow \| deny \| revoke}` |
 | `POST` | `/launch` | token | `{appId}` launch an app on the device |
 | `POST` | `/vega` | token | run an allowlisted `vega` CLI command on the PC |
-| `POST` | `/shutdown` | token (hub/host tools) | stop the bridge, what `fyaisa disconnect` calls |
+| `POST` | `/shutdown` | token + hub header | stop the bridge, what `fyaisa disconnect` calls |
 
 Auth is `X-FYAISA-Token: <token>` compared with `crypto.timingSafeEqual`.
 
@@ -107,8 +107,9 @@ per app id (`app.<name>.main`-style ids):
 - An allowed app that pairs from the Fire TV's own address (fresh, within
   72 h) is auto-approved, so an app can finish setting itself up without the
   user touching the PC again.
-- Requests without an app header (host tools, `curl`) are token-only, as
-  before; the token is still the real security boundary.
+- Requests without an app header (host tools, `curl`) are token-only, but
+  hub-only routes additionally require `X-FYAISA-App: app.fyaisa.hub.main`.
+  The token remains the real security boundary.
 
 ## Running the Vega CLI from an app (`POST /vega`)
 

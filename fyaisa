@@ -63,6 +63,7 @@ info() { printf '%s==>%s %s\n' "$CYN" "$RST" "$1" >&2; }
 warn() { printf '%s[warn]%s %s\n' "$YEL" "$RST" "$1" >&2; }
 ok()   { printf '%s[ok]%s %s\n' "$GRN" "$RST" "$1" >&2; }
 die()  { printf '%s[error]%s %s\n' "$RED" "$RST" "$1" >&2; exit 1; }
+need_arg() { [[ $# -ge 2 && -n "${2:-}" ]] || die "Option $1 needs a value"; }
 
 # --- dependencies ------------------------------------------------------------
 need() { command -v "$1" >/dev/null 2>&1 || die "'$1' not found. $2"; }
@@ -80,9 +81,9 @@ setup_env() {
 # --- args --------------------------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --repo) REPO_URL="$2"; shift 2 ;;
-    --dir)  LOCAL_DIR="$2"; shift 2 ;;
-    --ip)   DEVICE_IP="$2"; shift 2 ;;
+    --repo) need_arg "$@"; REPO_URL="$2"; shift 2 ;;
+    --dir)  need_arg "$@"; LOCAL_DIR="$2"; shift 2 ;;
+    --ip)   need_arg "$@"; DEVICE_IP="$2"; shift 2 ;;
     --debug) DEBUG=1; shift ;;
     -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) break ;;
@@ -92,14 +93,22 @@ CMD="${1:-list}"; shift || true
 
 catalog_url() { printf '%s/raw/main/catalog.json' "${REPO_URL%.git}"; }
 
+CATALOG_CACHE=""
 fetch_catalog() {
   local cache url
+  if [[ -n "$CATALOG_CACHE" ]]; then
+    printf '%s' "$CATALOG_CACHE"
+    return 0
+  fi
   cache="$(mktemp)"; url="$(catalog_url)"
-  curl -fsSL "$url" -o "$cache" 2>/dev/null || {
-    [[ -f "$LOCAL_DIR/catalog.json" ]] && { cat "$LOCAL_DIR/catalog.json"; return 0; }
+  curl -fsSL --connect-timeout 5 --max-time 15 "$url" -o "$cache" 2>/dev/null || {
+    rm -f "$cache"
+    [[ -f "$LOCAL_DIR/catalog.json" ]] && { CATALOG_CACHE="$(cat "$LOCAL_DIR/catalog.json")"; printf '%s' "$CATALOG_CACHE"; return 0; }
     die "Could not fetch $url and no local catalog at $LOCAL_DIR/catalog.json"
   }
-  cat "$cache"; rm -f "$cache"
+  CATALOG_CACHE="$(cat "$cache")"
+  rm -f "$cache"
+  printf '%s' "$CATALOG_CACHE"
 }
 
 # Query the catalog with python3 (jq is not guaranteed to be installed).
@@ -293,10 +302,16 @@ require_device() {
 # Use --dir to build from a local checkout instead.
 APP_CACHE_DIR="$HOME/.fyaisa/app-cache"
 
+repo_tarball_url() {
+  local base="${REPO_URL%.git}"
+  base="${base%/}"
+  printf '%s/archive/refs/heads/main.tar.gz' "$base"
+}
+
 fetch_app_source() {
   local rel="$1"
   local cache_dir="$APP_CACHE_DIR/$rel"
-  local tarball_url="https://github.com/AaronYTDev/FYAISA/archive/refs/heads/main.tar.gz"
+  local tarball_url; tarball_url="$(repo_tarball_url)"
 
   mkdir -p "$APP_CACHE_DIR"
 
@@ -505,11 +520,11 @@ cmd_connect() {
   local port=47821 lan=0 tunnel=0 no_forward=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --port)   port="$2"; shift 2 ;;
+      --port)   need_arg "$@"; port="$2"; shift 2 ;;
       --lan)    lan=1; shift ;;
       --tunnel) tunnel=1; shift ;;
       --no-forward) no_forward=1; shift ;;
-      --hub)    LOCAL_DIR="$2"; shift 2 ;;
+      --hub)    need_arg "$@"; LOCAL_DIR="$2"; shift 2 ;;
       *) die "Unknown option for connect: $1" ;;
     esac
   done
@@ -527,7 +542,7 @@ cmd_connect() {
     warn "Clone the hub:  git clone $REPO_URL $LOCAL_DIR"
   fi
 
-  local args=("$LOCAL_DIR/bridge/bridge.js" "--port" "$port" "--hub-dir" "$LOCAL_DIR")
+  local args=("$LOCAL_DIR/bridge/bridge.js" "--port" "$port" "--hub-dir" "$LOCAL_DIR" "--repo" "$REPO_URL")
   [[ $lan -eq 1 ]] && args+=("--lan")
   [[ $tunnel -eq 1 ]] && args+=("--tunnel")
 
@@ -587,8 +602,8 @@ cmd_disconnect() {
   local port=47821 host=127.0.0.1
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --port) port="$2"; shift 2 ;;
-      --host) host="$2"; shift 2 ;;
+      --port) need_arg "$@"; port="$2"; shift 2 ;;
+      --host) need_arg "$@"; host="$2"; shift 2 ;;
       *) die "Unknown option for disconnect: $1" ;;
     esac
   done
@@ -607,7 +622,8 @@ except Exception:
   fi
 
   local args=(-sS --max-time 5 -X POST "http://$host:$port/shutdown"
-              -H 'Content-Type: application/json')
+              -H 'Content-Type: application/json'
+              -H 'X-FYAISA-App: app.fyaisa.hub.main')
   [[ -n "$token" ]] && args+=(-H "X-FYAISA-Token: $token")
 
   local out=""
@@ -663,8 +679,8 @@ cmd_approve() {
   shift || true
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --port) port="$2"; shift 2 ;;
-      --host) host="$2"; shift 2 ;;
+      --port) need_arg "$@"; port="$2"; shift 2 ;;
+      --host) need_arg "$@"; host="$2"; shift 2 ;;
       *) die "Unknown option for approve: $1" ;;
     esac
   done

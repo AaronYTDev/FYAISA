@@ -18,12 +18,13 @@
  *   - A 6-digit pairing code must be exchanged before any job is accepted.
  *   - After pairing, every request needs `X-FYAISA-Token`.
  *   - Tokens are random, stored in the state file, and never logged.
- *   - POST /shutdown stops the bridge (token + hub/host tools only); this is
+ *   - POST /shutdown stops the bridge (token + explicit hub header); this is
  *     what `fyaisa disconnect` calls.
  *   - Apps that identify themselves with `X-FYAISA-App: <app-id>` are gated:
  *     FYAISA (the owner app) allows or denies each app id from the ElevSH
  *     screen; unknown ids get a pending 403 until approved. Requests without
- *     an app header (host tools, curl) are token-only, as before.
+ *     an app header (host tools, curl) are token-only, but hub-only routes
+ *     (/shutdown, /uninstall, /pair/pending, /access) require the hub header.
  *
  * Plain HTTP, because this is a short-lived LAN tool. Use `fyaisa connect
  * --tunnel` to wrap it in a public HTTPS tunnel if you need internet access
@@ -47,6 +48,7 @@ const has = (name) => args.includes(name);
 
 const PORT = parseInt(flag('--port', '47821'), 10);
 const HOST_DIR = flag('--hub-dir', process.env.FYAISA_DIR || path.join(os.homedir(), 'FYAISA'));
+const REPO_URL = flag('--repo', 'https://github.com/AaronYTDev/FYAISA');
 const BIND = has('--lan') ? '0.0.0.0' : '127.0.0.1';
 const PAIR_TTL_MS = 10 * 60 * 1000;
 // How long the recorded Fire TV address stays fresh for auto-approvals.
@@ -254,14 +256,21 @@ function readCatalog() {
   }
 }
 
-// Fetch the catalog from GitHub (fallback when local is stale/missing)
+// Fetch the catalog from the configured repo (fallback when local is stale).
+const CATALOG_TTL_MS = 60_000;
+const CATALOG_FAIL_TTL_MS = 60_000;
+let catalogCache = {at: 0, failAt: 0, data: null, inflight: null};
+
+function remoteCatalogUrl() {
+  const base = String(REPO_URL || '').replace(/\.git$/, '').replace(/\/$/, '');
+  return `${base}/raw/main/catalog.json`;
+}
+
 async function fetchRemoteCatalog() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15_000);
   try {
-    const res = await fetch('https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json', {
-      signal: controller.signal,
-    });
+    const res = await fetch(remoteCatalogUrl(), {signal: controller.signal});
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } catch (e) {
@@ -272,13 +281,31 @@ async function fetchRemoteCatalog() {
   }
 }
 
-// The catalog the hub works from: GitHub's, so merged PRs and releases show up
-// without waiting for your local checkout to catch up. Local is the offline
-// fallback.
+// The catalog the hub works from: the repository's, so merged PRs show up
+// without waiting for the local checkout. Cache it briefly and coalesce
+// concurrent reads: the hub can ask for it on every screen, and an offline PC
+// used to stall each call for the full 15-second fetch timeout.
 async function currentCatalog() {
-  const remote = await fetchRemoteCatalog();
-  if (remote && Array.isArray(remote.apps)) return remote;
-  return readCatalog();
+  const now = Date.now();
+  if (catalogCache.data && now - catalogCache.at < CATALOG_TTL_MS) return catalogCache.data;
+  if (now - catalogCache.failAt < CATALOG_FAIL_TTL_MS) {
+    return catalogCache.data || readCatalog();
+  }
+  if (catalogCache.inflight) return catalogCache.inflight;
+  catalogCache.inflight = (async () => {
+    const remote = await fetchRemoteCatalog();
+    if (remote && Array.isArray(remote.apps)) {
+      catalogCache = {at: Date.now(), failAt: 0, data: remote, inflight: catalogCache.inflight};
+      return remote;
+    }
+    catalogCache.failAt = Date.now();
+    return catalogCache.data || readCatalog();
+  })();
+  try {
+    return await catalogCache.inflight;
+  } finally {
+    catalogCache.inflight = null;
+  }
 }
 
 // The version an app's local checkout declares (its manifest.toml). null when
@@ -1058,6 +1085,11 @@ async function handleRequest(req, res) {
       return json(res, 429, { ok: false, error: 'too many pairing attempts', code: 'rate_limited' });
     }
     cleanupPairings();
+    const rawApp = req.headers['x-fyaisa-app'];
+    const appId = typeof rawApp === 'string' ? rawApp : null;
+    if (appId !== null && !APP_ID_RE.test(appId)) {
+      return json(res, 400, { ok: false, error: 'malformed X-FYAISA-App header', code: 'bad_app_id' });
+    }
     const body = await readBody(req, res);
     const code = String(body.code || '');
     if (!/^\d{6}$/.test(code)) {
@@ -1068,10 +1100,21 @@ async function handleRequest(req, res) {
       if (p) pairings.delete(code);
       return json(res, 404, { ok: false, error: 'unknown/expired code', code: 'unknown_code' });
     }
-    // Approving and exchanging are the same endpoint for compatibility. The
-    // CLI (`fyaisa approve`) only flips the decision; the client that polls
-    // /pair/status performs the single token exchange.
+    // Approving and exchanging share this endpoint, but they are different
+    // privileges. Only the host CLI or the authenticated hub may flip a
+    // pending decision; only the device that requested the code may exchange
+    // it for the bridge token. Previously two unauthenticated POSTs with a
+    // guessed 6-digit code handed out the global token.
+    const hostApprover = body.device === 'fyaisa-cli';
+    const hubApprover = authorized(req) && appId === OWNER_APP;
     if (!p.approved) {
+      if (!hostApprover && !hubApprover) {
+        return json(res, 403, {
+          ok: false,
+          error: 'approve this code on the PC or in FYAISA first',
+          code: 'approval_required',
+        });
+      }
       p.approved = true;
       if (p.appId && p.appId !== OWNER_APP) {
         STATE.access[p.appId] = 'allow';
@@ -1079,13 +1122,20 @@ async function handleRequest(req, res) {
       }
       saveState(STATE);
       log('pairing approved for', String(body.device || 'device').slice(0, 64));
-      const approverOnly = body.device === 'fyaisa-cli';
-      return json(res, 200, approverOnly ? { ok: true, approved: true } : { ok: true, token: STATE.token });
+      return json(res, 200, { ok: true, approved: true });
     }
     if (p.consumed) {
       p.attempts += 1;
       if (p.attempts >= MAX_PAIR_ATTEMPTS) pairings.delete(code);
       return json(res, 404, { ok: false, error: 'pairing code already used', code: 'code_consumed' });
+    }
+    const tokenRequester = body.device === 'fyaisa-client' || body.device === 'fyaisa-app';
+    if (ip !== p.ip || appId !== p.appId || (!tokenRequester && !hubApprover)) {
+      return json(res, 403, {
+        ok: false,
+        error: 'pairing code belongs to a different device or app',
+        code: 'pair_mismatch',
+      });
     }
     p.consumed = true;
     p.attempts += 1;
@@ -1111,10 +1161,10 @@ async function handleRequest(req, res) {
 
   // Stop the bridge (`fyaisa disconnect`). Same token as every other call, but
   // a paired homebrew app must not be able to pull the bridge out from under
-  // everyone, so only the hub app or a headerless host tool may use it.
+  // everyone, so the hub header is required here.
   if (path_ === '/shutdown' && req.method === 'POST') {
     const h = req.headers['x-fyaisa-app'];
-    if (typeof h === 'string' && h !== OWNER_APP) {
+    if (h !== OWNER_APP) {
       return json(res, 403, { error: 'only the hub or host tools may stop the bridge', code: 'access_denied' });
     }
     json(res, 200, { ok: true, stopping: true });
@@ -1129,7 +1179,7 @@ async function handleRequest(req, res) {
   // user can approve on the TV instead of typing codes on the PC.
   if (path_ === '/pair/pending' && req.method === 'GET') {
     const h = req.headers['x-fyaisa-app'];
-    if (typeof h === 'string' && h !== OWNER_APP) {
+    if (h !== OWNER_APP) {
       return json(res, 403, { error: 'only FYAISA reads pending pairings', code: 'access_denied' });
     }
     const now = Date.now();
@@ -1201,7 +1251,7 @@ async function handleRequest(req, res) {
   // interleave against the same stick.
   if (path_ === '/uninstall' && req.method === 'POST') {
     const h = req.headers['x-fyaisa-app'];
-    if (typeof h === 'string' && h !== OWNER_APP) {
+    if (h !== OWNER_APP) {
       return json(res, 403, { error: 'only the hub may uninstall apps', code: 'access_denied' });
     }
     const body = await readBody(req, res);
@@ -1245,7 +1295,7 @@ async function handleRequest(req, res) {
   // ---- ElevSH access management: allow / deny / revoke app ids ----
   if (path_ === '/access' && req.method === 'GET') {
     const h = req.headers['x-fyaisa-app'];
-    if (typeof h === 'string' && h !== OWNER_APP) {
+    if (h !== OWNER_APP) {
       return json(res, 403, { error: 'only FYAISA manages ElevSH access', code: 'access_denied' });
     }
     return json(res, 200, {
@@ -1255,7 +1305,7 @@ async function handleRequest(req, res) {
 
   if (path_ === '/access' && req.method === 'POST') {
     const h = req.headers['x-fyaisa-app'];
-    if (typeof h === 'string' && h !== OWNER_APP) {
+    if (h !== OWNER_APP) {
       return json(res, 403, { error: 'only FYAISA manages ElevSH access', code: 'access_denied' });
     }
     const body = await readBody(req, res);
