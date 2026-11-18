@@ -171,6 +171,11 @@
         "Fixed: declares com.amazon.network.service so TMDB and VidSrc can be reached.",
         "Fixed: VidSrc mirror fallbacks (vidsrc.to, .cc, .xyz, .pro, .net) — if one domain dies, the app tries the next.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ],
+      "screenshots": [
+        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/cinevega/assets/screenshot-home.png",
+        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/cinevega/assets/screenshot-detail.png",
+        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/cinevega/assets/screenshot-player.png"
       ]
     },
     {
@@ -215,6 +220,10 @@
         "Contains a vendored copy of the TizenTube userscript (GPL-3.0); upstream credits live in the repos.",
         "Updates install on the TV via `fyaisa update app.vegatube.main` (no in-app pairing); the ElevSH client lives in ElevSH Files.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
+      ],
+      "screenshots": [
+        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/vegatube/assets/screenshot-home.png",
+        "https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/apps/vegatube/assets/screenshot-player.png"
       ]
     },
     {

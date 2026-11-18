@@ -85,6 +85,8 @@ type HubApp = {
   status?: string;
   updated?: string;
   notes?: string[];
+  /** Optional full-size artwork URLs shown in the detail view gallery. */
+  screenshots?: string[];
 };
 
 type Catalog = { hub?: {name?: string; tagline?: string}; apps?: HubApp[] };
@@ -314,6 +316,29 @@ const DEBLOAT_KEEP = new Set([
   'com.amazon.vegaoobe.main', // out-of-box setup
 ]);
 
+/**
+ * Compare two dotted version strings: -1, 0, or 1. Handles pre-release
+ * suffixes the same way as the CLI's version_cmp.
+ */
+const versionCmp = (a: string, b: string): number => {
+  const pa = String(a).split('.');
+  const pb = String(b).split('.');
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const da = (parseInt(pa[i]?.split('-')[0], 10) || 0);
+    const db = (parseInt(pb[i]?.split('-')[0], 10) || 0);
+    if (da < db) return -1;
+    if (da > db) return 1;
+    // Numeric parts equal: compare pre-release suffixes lexicographically.
+    const sa = pa[i]?.includes('-') ? pa[i].split('-').slice(1).join('-') : '';
+    const sb = pb[i]?.includes('-') ? pb[i].split('-').slice(1).join('-') : '';
+    if (sa && !sb) return -1; // a has a suffix, b doesn't → a is older
+    if (!sa && sb) return 1;  // b has a suffix, a doesn't → b is older
+    if (sa && sb && sa < sb) return -1;
+    if (sa && sb && sa > sb) return 1;
+  }
+  return 0;
+};
+
 const statusColor = (s?: string) =>
   s === 'stable' ? '#4caf50' : s === 'beta' ? '#ffb300' : '#9e9e9e';
 
@@ -428,6 +453,8 @@ const Hub = () => {
   // once it has finished or been skipped.
   const [introDone, setIntroDone] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Full-screen screenshot preview URL, or null when no preview is open.
+  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null);
   // Apps menu search: the query string, plus whether the on-screen keyboard is
   // up (a TV has no system keyboard; typing is a grid of keys you D-pad over).
   const [query, setQuery] = useState('');
@@ -463,6 +490,10 @@ const Hub = () => {
   const [statusKnown, setStatusKnown] = useState(false);
   /** Update-all progress; null while no update-all run is going on. */
   const [updateAll, setUpdateAll] = useState<{done: number; total: number; current: string} | null>(null);
+  // Hub auto-update: tracks whether the catalog publishes a newer hub version
+  // than the one currently installed, and what that version is.
+  const [hubUpdateAvailable, setHubUpdateAvailable] = useState(false);
+  const [hubUpdateVersion, setHubUpdateVersion] = useState<string | null>(null);
   // Detail-view app actions (Open / Uninstall over ElevSH): the in-flight
   // label, the last result, and which app's Uninstall is armed for a 2nd tap.
   const [appBusy, setAppBusy] = useState<string | null>(null);
@@ -988,6 +1019,45 @@ const Hub = () => {
   );
 
   /**
+   * Update the hub itself: queues a build+install of app.fyaisa.hub.main
+   * over ElevSH, exactly like any other app update.
+   */
+  const updateHub = useCallback(async () => {
+    bumpActivity();
+    try {
+      const {jobId} = await bridgeFetch('/install', {
+        method: 'POST',
+        body: JSON.stringify({appId: 'app.fyaisa.hub.main'}),
+      });
+      setPair(p => ({
+        ...p,
+        job: {id: jobId, status: 'queued', log: []},
+        message: `Updating FYAISA hub to v${hubUpdateVersion}…`,
+      }));
+      const iv = setInterval(async () => {
+        try {
+          const job = await bridgeFetch(`/job?id=${jobId}`);
+          setPair(p => ({...p, job}));
+          if (job.status === 'done') {
+            clearInterval(iv);
+            setHubUpdateAvailable(false);
+            setHubUpdateVersion(null);
+            setPair(p => ({...p, message: 'FYAISA hub updated — relaunch to apply.'}));
+          } else if (job.status === 'error') {
+            clearInterval(iv);
+            setPair(p => ({...p, status: 'error', message: 'Hub update failed.'}));
+          }
+        } catch (e: any) {
+          clearInterval(iv);
+          setPair(p => ({...p, status: 'error', message: e.message}));
+        }
+      }, PAIR_POLL_MS);
+    } catch (e: any) {
+      setPair(p => ({...p, status: 'error', message: e.message}));
+    }
+  }, [bridgeFetch, hubUpdateVersion]);
+
+  /**
    * Rebuild and reinstall every installed app, one bridge job at a time.
    * Update = install (reinstalls the latest version from the catalog).
    */
@@ -1441,6 +1511,22 @@ const Hub = () => {
         setCatalog(data);
         setError(null);
         console.info(`[FYAISA] catalog loaded: ${data.apps.length} app(s)`);
+        // Auto-update check: does the catalog publish a newer hub version?
+        const hubEntry = (data.apps || []).find((a: any) => a.id === 'app.fyaisa.hub.main');
+        if (hubEntry?.version && hubEntry.version !== HUB_VERSION) {
+          // Compare versions: if catalog version > installed version, offer update.
+          const cmp = versionCmp(hubEntry.version, HUB_VERSION);
+          if (cmp > 0) {
+            setHubUpdateAvailable(true);
+            setHubUpdateVersion(hubEntry.version);
+          } else {
+            setHubUpdateAvailable(false);
+            setHubUpdateVersion(null);
+          }
+        } else {
+          setHubUpdateAvailable(false);
+          setHubUpdateVersion(null);
+        }
       } catch (e: any) {
         const msg = (e && e.message) || String(e);
         console.error(`[FYAISA] catalog fetch failed: ${msg}`);
@@ -1505,6 +1591,23 @@ const Hub = () => {
     return <Intro onFirstFrame={hideSplash} onDone={() => setIntroDone(true)} />;
   }
 
+  // Full-screen screenshot preview modal — overlays everything, D-pad exits.
+  if (screenshotPreview) {
+    return (
+      <View style={styles.previewOverlay}>
+        <Image
+          source={{uri: screenshotPreview}}
+          style={styles.previewImage}
+          onError={() => setScreenshotPreview(null)}
+        />
+        <View style={styles.previewCaption}>
+          <Text style={styles.previewTitle}>Screenshot preview</Text>
+          <Text style={styles.previewHint}>OK or Back → return</Text>
+        </View>
+      </View>
+    );
+  }
+
   // Main menu: submenus (Apps / ElevSH) hang off this screen.
   if (selectedId === null) {
     const submenus = [
@@ -1533,6 +1636,14 @@ const Hub = () => {
         title: 'About',
         summary: `FYAISA ${HUB_VERSION} · ${apps.length} app${apps.length === 1 ? '' : 's'} in the catalog`,
       },
+      // Hub auto-update: show when the catalog publishes a newer hub version.
+      ...(hubUpdateAvailable ? [
+        {
+          id: '__hubupdate__',
+          title: 'Update FYAISA hub',
+          summary: `New version v${hubUpdateVersion} available — install over ElevSH`,
+        },
+      ] : []),
     ];
     return (
       <Animated.View style={[styles.wrap, {opacity: pageOpacity}]}>
@@ -1556,7 +1667,13 @@ const Hub = () => {
                 ]}
                 onPressIn={() => setMenuPressed(true)}
                 onPressOut={() => setMenuPressed(false)}
-                onPress={() => setSelectedId(m.id)}>
+                onPress={() => {
+                  if (m.id === '__hubupdate__') {
+                    updateHub();
+                  } else {
+                    setSelectedId(m.id);
+                  }
+                }}>
                 <View style={styles.rowMain}>
                   <Text style={styles.rowTitle}>{m.title}</Text>
                   <Text style={styles.rowSummary} numberOfLines={2}>
@@ -2300,6 +2417,37 @@ const Hub = () => {
           {selected.summary ? (
             <Text style={styles.detailSummary}>{selected.summary}</Text>
           ) : null}
+
+          {/* App screenshots gallery — horizontal scroll of artwork from the catalog. */}
+          {selected.screenshots?.length ? (
+            <View style={styles.screenshotsSection}>
+              <Text style={styles.screenshotsTitle}>Screenshots</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.screenshotsRow}>
+                {selected.screenshots.map((url, i) => (
+                  <Pressable
+                    key={`screenshot-${i}`}
+                    focusable
+                    style={({focused}) => [
+                      styles.screenshotCard,
+                      focused && styles.screenshotCardFocused,
+                    ]}
+                    onPress={() => setScreenshotPreview(url)}>
+                    <Image
+                      source={{uri: url}}
+                      style={styles.screenshotImage}
+                      onError={() => {}}
+                    />
+                    <Text style={styles.screenshotLabel}>{`Shot ${i + 1}`}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+              {selected.screenshots.length > 1 && (
+                <Text style={styles.screenshotHint}>
+                  D-pad left/right to browse, OK to preview full screen.
+                </Text>
+              )}
+            </View>
+          ) : null}
           {selected.description ? (
             <Text style={styles.detailBody}>{selected.description}</Text>
           ) : null}
@@ -2928,6 +3076,62 @@ const makeStyles = (t: ResolvedTheme) => {
   },
   detailRemoveArmed: {backgroundColor: t.danger},
   detailRemoveArmedText: {color: '#ffffff'},
+  // Screenshot gallery on the app detail view.
+  screenshotsSection: {marginTop: 20},
+  screenshotsTitle: {color: t.text, fontSize: 20, fontWeight: '600', marginBottom: 10},
+  screenshotsRow: {paddingRight: 20},
+  screenshotCard: {
+    width: 260,
+    height: 150,
+    marginRight: 12,
+    backgroundColor: t.surface,
+    borderRadius: 8,
+    ...buttonBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  screenshotCardFocused: {backgroundColor: t.surfaceAlt},
+  screenshotImage: {width: 260, height: 150},
+  screenshotLabel: {
+    color: t.textDim,
+    fontSize: 14,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  screenshotHint: {
+    color: t.textMuted,
+    fontSize: 15,
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  // Full-screen screenshot preview overlay.
+  previewOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#000000',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewImage: {
+    width: '90%',
+    height: '90%',
+    resizeMode: 'contain',
+  },
+  previewCaption: {
+    position: 'absolute',
+    bottom: 40,
+    alignItems: 'center',
+  },
+  previewTitle: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  previewHint: {
+    color: '#9e9e9e',
+    fontSize: 16,
+  },
   backBtn: {
     marginTop: 28,
     alignSelf: 'flex-start',
