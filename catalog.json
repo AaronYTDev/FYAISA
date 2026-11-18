@@ -35,8 +35,8 @@
       "requiresNetwork": true,
       "drm": false,
       "status": "stable",
-      "version": "1.9.3",
-      "updated": "2026-10-11",
+      "version": "2.0.0",
+      "updated": "2026-11-18",
       "install": {
         "kind": "vpkg-release",
         "release": "https://api.github.com/repos/AaronYTDev/FYAISA/releases",
@@ -48,7 +48,9 @@
         "ElevSH gets a Discover button: with `fyaisa connect --lan` running, the hub finds your computer through a reverse tunnel — no IP to type on the D-pad.",
         "Power Tools gains a de-bloater: tick preinstalled apps you never use — a preset covers the usual suspects — and remove them over ElevSH.",
         "App details gain Open on Fire TV and Uninstall buttons: launch a homebrew app, or remove it with a two-tap confirm — no terminal needed.",
-        "The address box still opens pre-filled with 192.168. as a manual fallback.",
+        "The address box still opens pre-filled with 192.168. as a manual fallback; pasted addresses and hostnames are normalised.",
+        "2.0.0: 13 themes including Cyberpunk, Matrix and High Contrast; animated backgrounds, focus pulse and press feedback; app screenshot galleries; in-hub hub update notices.",
+        "2.0.0: `fyaisa connect --lan` no longer needs the Vega CLI in PATH, opens the firewall port, and prints the exact address to pair from.",
         "Requires Developer Mode on the Fire TV; not installable from the Amazon Appstore."
       ]
     },

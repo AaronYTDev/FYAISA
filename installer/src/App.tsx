@@ -46,7 +46,7 @@ import {
 const CATALOG_URL = 'https://raw.githubusercontent.com/AaronYTDev/FYAISA/main/catalog.json';
 const HUB_URL = 'https://github.com/AaronYTDev/FYAISA';
 /** Hub version, kept in step with installer/manifest.toml. */
-const HUB_VERSION = '1.9.3';
+const HUB_VERSION = '2.0.0';
 
 /**
  * Row icons: the same artwork the launcher tiles use, bundled with the hub
