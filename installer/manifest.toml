@@ -4,7 +4,7 @@ schema-version = 1
 title = "FYAISA"
 version = "2.0.0"
 id = "app.fyaisa.hub"
-icon = "@image/fyaisa.png"
+icon = "@image/hub.png"
 
 # Vega OS 1.2 is the only version the current SDK mints. For firmware still on
 # 1.1 use SDK 0.23.9221 and set min/target to "1.1" with IVega_1_1.
@@ -15,9 +15,6 @@ target = "1.2"
 [needs]
 [[needs.module]]
 id = "/com.amazon.kepler.keplerscript_4@IKeplerScript_0"
-
-[[needs.module]]
-id = "/com.amazon.kepler.webview_4@IWebview_4"
 
 [[needs.module]]
 id = "/com.amazon.kepler.kepler_file_system_0@IKeplerFileSystem_0"
@@ -36,7 +33,3 @@ categories = ["com.amazon.category.main"]
 # Catalog is fetched from GitHub over HTTPS.
 [[wants.service]]
 id = "com.amazon.network.service"
-
-# If your build serves a WebView fallback for catalog entries.
-[[wants.service]]
-id = "com.amazon.webview.renderer_service"

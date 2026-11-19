@@ -16,7 +16,6 @@
   "dependencies": {
     "@amazon-devices/kepler-file-system": "^0.0.7",
     "@amazon-devices/react-native-kepler": "^4.0.0",
-    "@amazon-devices/webview": "^4.0.0",
     "react": "19.2.0",
     "react-native": "0.83.0"
   },
@@ -39,7 +38,7 @@
       "tv"
     ]
   },
-  "description": "FYAISA \u2014 the homebrew hub for Amazon Vega OS Fire TV devices.",
+  "description": "FYAISA — the homebrew hub for Amazon Vega OS Fire TV devices.",
   "author": "AaronYTDev",
   "license": "GPL-3.0-only",
   "repository": {
