@@ -194,6 +194,16 @@ const FALLBACK_CATALOG: Catalog = {
   hub: {name: 'FYAISA', tagline: 'Catalog unavailable — showing built-in list'},
   apps: [
     {
+      id: 'app.fyaisa.hub.main',
+      name: 'FYAISA',
+      summary: 'The homebrew hub itself. Update it from here when a new build ships.',
+      path: 'installer',
+      version: '2.0.0',
+      license: 'GPL-3.0-only',
+      tags: ['fyaisa', 'hub', 'installer', 'offline'],
+      status: 'stable',
+    },
+    {
       id: 'app.vegatube.main',
       name: 'VegaTube',
       summary: 'Ad-free, sponsor-free YouTube for Vega OS Fire TV Sticks.',
